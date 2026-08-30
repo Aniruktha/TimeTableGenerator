@@ -1,0 +1,257 @@
+# AMCS department, PSG College of Technology -- Semester 2, even term 2025-26.
+#
+# This is the MVP slice: all four M.Sc. branches at the same semester, sharing
+# one faculty pool and one room pool.  Courses, hours, staff assignments and
+# room codes are transcribed from the published timetable (TT_even_25-26.pdf).
+#
+# Why this slice: the four Sem-2 classes share 8 staff members between them
+# (see `uv run tt workload`), so a solution has to resolve real cross-branch
+# conflicts.  Scheduling one branch alone would be trivial and would prove
+# nothing.
+
+name: AMCS Semester 2 (even 2025-26)
+
+grid:
+  days: [MON, TUE, WED, THU, FRI]
+  periods:
+    - {id: 1, start: "08:30", end: "09:20"}
+    - {id: 2, start: "09:20", end: "10:10"}   # 20-min break follows
+    - {id: 3, start: "10:30", end: "11:20"}
+    - {id: 4, start: "11:20", end: "12:10"}   # lunch follows
+    - {id: 5, start: "13:40", end: "14:30"}
+    - {id: 6, start: "14:30", end: "15:20"}   # 10-min break follows
+    - {id: 7, start: "15:30", end: "16:20"}
+    - {id: 8, start: "16:20", end: "17:10"}
+  # A two-period lab may only occupy one of these pairs, so it never runs
+  # across a break.
+  blocks: [[1, 2], [3, 4], [5, 6], [7, 8]]
+
+# College-wide holds (assembly, department meeting).  None this term.
+blocked_slots: []
+
+rooms:
+  # -- lecture halls --
+  - {id: M201, kind: classroom, capacity: 70, building: M}
+  - {id: M202, kind: classroom, capacity: 70, building: M}
+  - {id: M503, kind: classroom, capacity: 70, building: M}
+  - {id: M504, kind: classroom, capacity: 70, building: M}
+  - {id: H203, kind: classroom, capacity: 60, building: H}
+  - {id: H204, kind: classroom, capacity: 60, building: H}
+  - {id: J202, kind: classroom, capacity: 60, building: J}
+  - {id: A107, kind: classroom, capacity: 60, building: A}
+  - {id: A112, kind: classroom, capacity: 60, building: A}
+  # -- computing labs --
+  - {id: J510, kind: lab, capacity: 30, building: J, facilities: [python, cpp, jdk]}
+  - {id: J511, kind: lab, capacity: 30, building: J, facilities: [python, cpp, jdk]}
+  - {id: J512, kind: lab, capacity: 30, building: J, facilities: [python, cpp, jdk]}
+  - {id: J513, kind: lab, capacity: 30, building: J, facilities: [python, cpp, jdk]}
+  - {id: J514, kind: lab, capacity: 30, building: J, facilities: [python, cpp, jdk]}
+  - {id: K502, kind: lab, capacity: 30, building: K, facilities: [python, cpp, jdk]}
+  - {id: A311, kind: lab, capacity: 25, building: A, facilities: [python, cpp]}
+
+staff:
+  # -- AMCS internal --
+  - {id: SURESH_KUMAR_V,   name: SURESH KUMAR V}
+  - {id: PERIAKARUPPAN_RM, name: PERIAKARUPPAN RM}
+  - {id: UMA_GAYATHRI_G,   name: UMA GAYATHRI G}
+  - {id: SUGANTHI_S_D,     name: SUGANTHI S D}
+  - {id: DHILSHYA_S,       name: DHILSHYA S}
+  - {id: NIVETHA_V,        name: NIVETHA V}
+  - {id: JANANI_K,         name: JANANI K}
+  - {id: KUMARESAN_M,      name: KUMARESAN M}
+  - {id: MEGALA_M,         name: MEGALA M}
+  - {id: SREEJA_N_K,       name: SREEJA N K}
+  - {id: PARISA_BEGUM_K,   name: PARISA BEGUM K}
+  - {id: SUDHA_S_S,        name: SUDHA S S}
+  - {id: ABILASHA_P_B,     name: ABILASHA P B}
+  - {id: UMA_VETRI_SELVI_G, name: UMA VETRI SELVI G}
+  - {id: RITHIKA_C,        name: RITHIKA C}
+  - {id: APARNA_V,         name: APARNA V}
+  - {id: THANALAKSHMI_P,   name: THANALAKSHMI P}
+  - {id: ANEETHA_A_S,      name: ANEETHA A S}
+  - {id: JEEVADOSS_S,      name: JEEVADOSS S}
+  - {id: GOWRISANKAR_S,    name: GOWRISANKAR S}
+  - {id: SHAKTHIGANESAN_M, name: SHAKTHIGANESAN M}
+  - {id: POONTHALIR_G,     name: POONTHALIR G}
+  - {id: SNEHA_R,          name: SNEHA R}
+
+  # -- other departments: they owe hours to their own timetable first --
+  - id: SAI_SUNDARA_KRISHNAN_G
+    name: SAI SUNDARA KRISHNAN G
+    kind: other_dept
+    unavailable: ["MON:1-4"]
+  - id: MUTHUSAMY_A
+    name: MUTHUSAMY A
+    kind: other_dept
+    unavailable: ["FRI:*"]
+  - id: KRISHNASAMY_R
+    name: KRISHNASAMY R
+    kind: other_dept
+    unavailable: ["THU:5-8"]
+
+  # -- visiting faculty: on campus only some days, so cluster their hours --
+  - id: HELDA_PRINCY_R
+    name: HELDA PRINCY R
+    kind: visiting
+    unavailable: ["MON:*"]
+    prefer_few_days: true
+
+groups:
+  - {id: SS-S2,  name: "M.Sc. Software Systems - Sem 2",           strength: 40, min_periods_per_day: 6, max_periods_per_day: 7}
+  - {id: CY-S2,  name: "M.Sc. Cyber Security - Sem 2",             strength: 40, min_periods_per_day: 6, max_periods_per_day: 7}
+  - {id: DS-S2,  name: "M.Sc. Data Science - Sem 2",               strength: 40, min_periods_per_day: 6, max_periods_per_day: 7}
+  - {id: TCS-S2, name: "M.Sc. Theoretical Computer Science - Sem 2", strength: 40, min_periods_per_day: 6, max_periods_per_day: 7}
+
+courses:
+  # ===================== M.Sc. Software Systems ========================= #
+  - {code: 23XW21, title: DISCRETE STRUCTURES,             group: SS-S2, kind: theory, hours: 5, sections: [{staff: [SURESH_KUMAR_V]}]}
+  - {code: 23XW22, title: LINEAR ALGEBRA,                  group: SS-S2, kind: theory, hours: 5, sections: [{staff: [SAI_SUNDARA_KRISHNAN_G]}]}
+  - {code: 23XW23, title: DATA STRUCTURES AND ALGORITHMS,  group: SS-S2, kind: theory, hours: 3, sections: [{staff: [PERIAKARUPPAN_RM]}]}
+  - {code: 23XW24, title: OBJECT ORIENTED PROGRAMMING,     group: SS-S2, kind: theory, hours: 3, sections: [{staff: [UMA_GAYATHRI_G]}]}
+  - {code: 23XW25, title: COMPUTER ORGANIZATION,           group: SS-S2, kind: theory, hours: 3, sections: [{staff: [SUGANTHI_S_D]}]}
+  - code: 23XW26
+    title: DATA STRUCTURES LAB
+    group: SS-S2
+    kind: lab
+    hours: 4
+    sections:                       # class splits into 2 batches, one per staff
+      - {staff: [PERIAKARUPPAN_RM], needs: [cpp]}
+      - {staff: [DHILSHYA_S],       needs: [cpp]}
+  - code: 23XW27
+    title: OBJECT COMPUTING LAB
+    group: SS-S2
+    kind: lab
+    hours: 4
+    sections:
+      - {staff: [UMA_GAYATHRI_G], needs: [jdk]}
+      - {staff: [NIVETHA_V],      needs: [jdk]}
+  - code: 23XW28
+    title: PYTHON PROGRAMMING LAB
+    group: SS-S2
+    kind: lab
+    hours: 4
+    sections:
+      - {staff: [JANANI_K],    needs: [python]}
+      - {staff: [KUMARESAN_M], needs: [python]}
+  - {code: SMR, title: SEMINAR, group: SS-S2, kind: activity, hours: 1, sections: [{staff: [MEGALA_M]}]}
+  - {code: TWM, title: TUTOR WARD MEETING, group: SS-S2, kind: activity, hours: 1,
+     sections: [{staff: [SURESH_KUMAR_V]}], pin: ["WED:6"]}
+
+  # ====================== M.Sc. Cyber Security ========================== #
+  - {code: 23XC21, title: DISCRETE STRUCTURES,            group: CY-S2, kind: theory, hours: 5, sections: [{staff: [KRISHNASAMY_R]}]}
+  - {code: 23XC22, title: ALGEBRA AND NUMBER THEORY,      group: CY-S2, kind: theory, hours: 5, sections: [{staff: [THANALAKSHMI_P]}]}
+  - {code: 23XC23, title: DATA STRUCTURES AND ALGORITHMS, group: CY-S2, kind: theory, hours: 3, sections: [{staff: [SREEJA_N_K]}]}
+  - {code: 23XC24, title: OBJECT ORIENTED PROGRAMMING,    group: CY-S2, kind: theory, hours: 3, sections: [{staff: [PARISA_BEGUM_K]}]}
+  - {code: 23XC25, title: COMPUTER ARCHITECTURE,          group: CY-S2, kind: theory, hours: 3, sections: [{staff: [SUDHA_S_S]}]}
+  - code: 23XC26
+    title: DATA STRUCTURES LABORATORY
+    group: CY-S2
+    kind: lab
+    hours: 4
+    sections:
+      - {staff: [SREEJA_N_K],   needs: [cpp]}
+      - {staff: [ABILASHA_P_B], needs: [cpp]}
+  - code: 23XC27
+    title: OBJECT COMPUTING LABORATORY
+    group: CY-S2
+    kind: lab
+    hours: 4
+    sections:                       # 3 batches -> needs 3 free labs at once
+      - {staff: [PARISA_BEGUM_K],    needs: [jdk]}
+      - {staff: [UMA_VETRI_SELVI_G], needs: [jdk]}
+      - {staff: [RITHIKA_C],         needs: [jdk]}
+  - code: 23XC28
+    title: PYTHON PROGRAMMING LABORATORY
+    group: CY-S2
+    kind: lab
+    hours: 4
+    sections:
+      - {staff: [JANANI_K], needs: [python]}
+      - {staff: [APARNA_V], needs: [python]}
+  - {code: SMR, title: SEMINAR, group: CY-S2, kind: activity, hours: 1, sections: [{staff: [THANALAKSHMI_P]}]}
+  - {code: TWM, title: TUTOR WARD MEETING, group: CY-S2, kind: activity, hours: 1,
+     sections: [{staff: [ANEETHA_A_S]}], pin: ["WED:6"]}
+
+  # ======================== M.Sc. Data Science =========================== #
+  - {code: 23XD21, title: DISCRETE STRUCTURES,            group: DS-S2, kind: theory, hours: 5, sections: [{staff: [JEEVADOSS_S]}]}
+  - {code: 23XD22, title: ABSTRACT ALGEBRA,               group: DS-S2, kind: theory, hours: 5, sections: [{staff: [KRISHNASAMY_R]}]}
+  - {code: 23XD23, title: DATA STRUCTURES AND ALGORITHMS, group: DS-S2, kind: theory, hours: 3, sections: [{staff: [UMA_VETRI_SELVI_G]}]}
+  - {code: 23XD24, title: OBJECT ORIENTED PROGRAMMING,    group: DS-S2, kind: theory, hours: 3, sections: [{staff: [PARISA_BEGUM_K]}]}
+  - {code: 23XD25, title: THEORY OF PROBABILITY,          group: DS-S2, kind: theory, hours: 4, sections: [{staff: [MUTHUSAMY_A]}]}
+  - code: 23XD26
+    title: OBJECT COMPUTING LAB
+    group: DS-S2
+    kind: lab
+    hours: 4
+    sections:
+      - {staff: [PARISA_BEGUM_K], needs: [jdk]}
+      - {staff: [JANANI_K],       needs: [jdk]}
+  - code: 23XD27
+    title: DATA STRUCTURES LAB
+    group: DS-S2
+    kind: lab
+    hours: 4
+    sections:
+      - {staff: [UMA_VETRI_SELVI_G], needs: [cpp]}
+      - {staff: [ABILASHA_P_B],      needs: [cpp]}
+  - code: 23XD28
+    title: PYTHON PROGRAMMING LAB
+    group: DS-S2
+    kind: lab
+    hours: 4
+    sections:
+      - {staff: [APARNA_V],      needs: [python]}
+      - {staff: [GOWRISANKAR_S], needs: [python]}
+  - {code: SMR, title: SEMINAR, group: DS-S2, kind: activity, hours: 1, sections: [{staff: [SHAKTHIGANESAN_M]}]}
+  - {code: TWM, title: TUTOR WARD MEETING, group: DS-S2, kind: activity, hours: 1,
+     sections: [{staff: [APARNA_V]}], pin: ["WED:6"]}
+
+  # ================ M.Sc. Theoretical Computer Science =================== #
+  - {code: 23XT21, title: DISCRETE STRUCTURES,            group: TCS-S2, kind: theory, hours: 5, sections: [{staff: [GOWRISANKAR_S]}]}
+  # Visiting staff, on campus TUE-FRI only, so this one may double up in a day.
+  - {code: 23XT22, title: ABSTRACT ALGEBRA,               group: TCS-S2, kind: theory, hours: 4, max_per_day: 2, sections: [{staff: [HELDA_PRINCY_R]}]}
+  - {code: 23XT23, title: DATA STRUCTURES AND ALGORITHMS, group: TCS-S2, kind: theory, hours: 3, sections: [{staff: [POONTHALIR_G]}]}
+  - {code: 23XT24, title: OBJECT ORIENTED PROGRAMMING,    group: TCS-S2, kind: theory, hours: 3, sections: [{staff: [UMA_VETRI_SELVI_G]}]}
+  - {code: 23XT25, title: TRANSFORMS AND ITS APPLICATIONS, group: TCS-S2, kind: theory, hours: 4, sections: [{staff: [SURESH_KUMAR_V]}]}
+  - code: 23XT26
+    title: DATA STRUCTURES LAB
+    group: TCS-S2
+    kind: lab
+    hours: 4
+    sections:
+      - {staff: [POONTHALIR_G], needs: [cpp]}
+      - {staff: [ABILASHA_P_B], needs: [cpp]}
+  - code: 23XT27
+    title: OBJECT ORIENTED PROGRAMMING LAB
+    group: TCS-S2
+    kind: lab
+    hours: 4
+    sections:
+      - {staff: [UMA_VETRI_SELVI_G], needs: [jdk]}
+      - {staff: [RITHIKA_C],         needs: [jdk]}
+      - {staff: [SNEHA_R],           needs: [jdk]}
+  - code: 23XT28
+    title: PYTHON PROGRAMMING LAB
+    group: TCS-S2
+    kind: lab
+    hours: 4
+    sections:
+      - {staff: [APARNA_V],      needs: [python]}
+      - {staff: [GOWRISANKAR_S], needs: [python]}
+  - {code: SMR, title: SEMINAR, group: TCS-S2, kind: activity, hours: 1, sections: [{staff: [SHAKTHIGANESAN_M]}]}
+  - {code: TWM, title: TUTOR WARD MEETING, group: TCS-S2, kind: activity, hours: 1,
+     sections: [{staff: [GOWRISANKAR_S]}], pin: ["WED:6"]}
+
+# Penalties, all relative to each other.  Raise `student_gap` to buy compact
+# student days at the cost of everything else; raise `staff_days` to make
+# visiting faculty come in less often.
+weights:
+  student_gap: 40
+  staff_gap: 8
+  staff_days: 5
+  late_period: 3
+  adjacent_days: 2
+  load_imbalance: 4
+  room_churn: 1
+  two_labs_per_day: 6
+  early_lab: 0

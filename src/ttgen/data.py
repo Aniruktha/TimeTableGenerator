@@ -18,6 +18,14 @@ import yaml
 from .config import Grid, Weights
 
 CourseKind = Literal["theory", "lab", "activity"]
+
+# What to do with a class's free periods.
+#   spread       leave the solver to place them (it already avoids mid-day gaps)
+#   daily_break  guarantee at least one free period every day
+#   packed       allow at most one free period a day, so the week runs full
+#   bunched      herd them onto as few days as possible, for whole free
+#                afternoons rather than scattered singles
+FREE_POLICIES = ("spread", "daily_break", "packed", "bunched")
 RoomKind = str  # "classroom", "lab", "seminar", ... free-form, matched by name
 
 
@@ -65,6 +73,10 @@ class Group:
     strength: int = 40
     min_periods_per_day: int = 0
     max_periods_per_day: int = 8
+    # Where this class's free periods should fall.  How *many* there are is
+    # fixed arithmetic -- slots in the week minus periods of teaching -- so
+    # the only thing on offer is placement.  See FREE_POLICIES.
+    free_policy: str = "spread"
 
 
 @dataclass(frozen=True)
@@ -259,13 +271,34 @@ def from_dict(raw: dict) -> Instance:
         staff[sid] = member
 
     groups: dict[str, Group] = {}
+    n_periods = len(grid.periods)
     for gr in raw.get("groups", []):
+        policy = str(gr.get("free_policy", "spread"))
+        if policy not in FREE_POLICIES:
+            raise InstanceError(
+                f"group {gr['id']!r}: unknown free_policy {policy!r}; "
+                f"expected one of {list(FREE_POLICIES)}"
+            )
+        lo = int(gr.get("min_periods_per_day", 0))
+        hi = int(gr.get("max_periods_per_day", n_periods))
+        # The two placement policies that are expressible as day-load bounds
+        # are folded in here, so preflight and the model both see the real
+        # numbers rather than having to know about policies.
+        if policy == "daily_break":
+            hi = min(hi, n_periods - 1)
+        elif policy == "packed":
+            lo = max(lo, n_periods - 1)
+        elif policy == "bunched":
+            # A whole free day is the point, so the floor has to come off --
+            # any positive minimum forbids the empty day outright.
+            lo = 0
         grp = Group(
             id=gr["id"],
             name=gr.get("name", gr["id"]),
             strength=int(gr.get("strength", 40)),
-            min_periods_per_day=int(gr.get("min_periods_per_day", 0)),
-            max_periods_per_day=int(gr.get("max_periods_per_day", len(grid.periods))),
+            min_periods_per_day=lo,
+            max_periods_per_day=hi,
+            free_policy=policy,
         )
         if grp.id in groups:
             raise InstanceError(f"duplicate group id {grp.id!r}")
@@ -357,6 +390,13 @@ def validate(inst: Instance) -> None:
                 errs.append(f"{c.uid}: {day} P{p} is both pinned and forbidden")
         if len(c.pins) > c.hours:
             errs.append(f"{c.uid}: {len(c.pins)} pins but only {c.hours}h")
+
+    for grp in inst.groups.values():
+        if grp.min_periods_per_day > grp.max_periods_per_day:
+            errs.append(
+                f"{grp.name}: needs at least {grp.min_periods_per_day} periods a day "
+                f"but is capped at {grp.max_periods_per_day} a day"
+            )
 
     # Elective baskets must agree on hours and kind, or they cannot share slots.
     for gid in inst.groups:

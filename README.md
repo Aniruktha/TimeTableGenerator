@@ -6,11 +6,135 @@ provable slice, not the whole department.
 
 ```bash
 uv sync
+uv run tt web                          # browser UI at http://127.0.0.1:8000
+```
+
+Or from the terminal:
+
+```bash
+uv run tt --data data/tiny_demo.yaml solve      # small demo, solves in under a second
 uv run tt check                        # validate the instance, look for impossibilities
 uv run tt workload                     # per-staff load: where infeasibility comes from
 uv run tt solve --time 120 --rooms     # generate, verify, print, export
 open out/timetable.html
 ```
+
+---
+
+## Running it
+
+**Input** is your rooms, teachers, classes and subjects. In the browser you
+type them into a form, or import each kind from its own CSV; on the command
+line they come from one YAML file. Two ready-made ones are bundled in `data/`:
+
+| File | What it is |
+| --- | --- |
+| `data/tiny_demo.yaml` | One class, four courses, four staff. Solves optimally in ~0.2s. Start here. |
+| `data/amcs_sem2.yaml` | The real slice — four M.Sc. branches, 40 courses, 27 staff. Needs 60–120s. |
+
+**Output** is a timetable in three views (per class, per staff member, per
+room) plus two exports: `timetable.csv`, one row per scheduled meeting, and
+`timetable.html`, a standalone page with its styles inlined.
+
+### In the browser
+
+```bash
+uv run tt web
+```
+
+Six steps, one thing at a time: **Start → Rooms → Teachers → Classes →
+Subjects → Generate**. Each step has its own small form — add a row, edit it,
+delete it — and its own CSV importer, so a spreadsheet of rooms and a
+spreadsheet of subjects go in separately rather than as one large file. Every
+importer offers a blank template with the right column headings, and reports
+per-row what it accepted and what it refused, with the reason.
+
+The first step is a **library**, so nothing lives only in your Downloads
+folder. It lists the bundled examples from `data/*.yaml` and, below them, your
+own setups. **Save to this site** stores the current one under `data/saved/`
+and it appears in the list straight away; **Open** brings it back, **Delete**
+removes it. Saving under a name already used updates that entry rather than
+piling up copies.
+
+`data/saved/` is gitignored — your working setups are yours, not part of the
+project. Drop any `.yaml` into `data/` itself to have it listed as a bundled
+example instead. **Download as file** and **Open a file** still move setups on
+and off the machine, and it is all the same YAML the CLI reads.
+
+Before generating, **Check for problems** looks for anything arithmetically
+impossible (a teacher assigned more hours than they have free slots, a class
+needing more periods than the week holds) and says which one to change. After
+generating you get **class timetables**, **teacher timetables**, **room
+usage**, a plain-English **quality** breakdown, and a **preview** of the exact
+file the download button produces.
+
+Error messages are rewritten into something actionable — "PART needs a lab
+holding at least 40 students, and you don't have one. Add a bigger lab, or
+split the subject into batches" rather than the solver's own wording.
+
+The solver runs locally. Nothing is uploaded anywhere.
+
+### In the terminal
+
+`tt solve` prints the grids and writes `out/timetable.csv` and
+`out/timetable.html` (change the directory with `--out`). Point any command at
+a different instance with `--data`:
+
+```bash
+uv run tt --data path/to/mine.yaml solve --time 120 --rooms
+```
+
+Useful flags: `--time` (search budget in seconds), `--seed` (a different seed
+gives a different timetable of similar quality), `--staff` (staff names inside
+the class grids), `--staff-grids`, `--rooms`, `--log`.
+
+## Free periods
+
+The number of free periods a class gets in a week is not a scheduling
+decision — it is subtraction:
+
+```
+free periods = (days x periods per day) - periods of teaching
+```
+
+For the shipped AMCS instance that is `40 - 33 = 7` per class, and no
+arrangement of the timetable changes it. What scheduling controls is *where*
+those seven fall. Each class picks one of four placements (`free_policy` in
+the YAML, "Where should the free periods go?" in the browser):
+
+| Policy | Effect |
+| --- | --- |
+| `spread` | The default. Free periods land wherever suits, and mid-day gaps are already penalised heavily. |
+| `daily_break` | At least one free period every day — caps the day at `periods - 1`. |
+| `packed` | At most one free period a day. Only possible when teaching nearly fills the week. |
+| `bunched` | Herds free periods onto as few days as possible, for whole free afternoons or days. |
+
+`bunched` penalises **part-full days** — a day with some teaching *and* some
+free time — rather than any day containing a free period. Scoring it the
+other way rates a completely free day as badly as a day with one awkward hole,
+which removes the very reason to prefer the day off.
+
+### Getting the weekly total down
+
+Since the total is arithmetic, only two things move it: teach more hours, or
+make the week smaller. For AMCS, dropping the 8th period is decisive:
+
+| Week | Free periods per class |
+| --- | --- |
+| 8 periods x 5 days (as shipped) | 7, 7, 6, 7 |
+| **7 periods x 5 days** | **2, 2, 1, 2** |
+
+Seven periods is the shortest day that still fits 33–34 hours across five
+days, so 1–2 free periods a week is the floor without cutting subject hours.
+The browser works this out for you and says so on the Classes step.
+
+### Why the solver runs server-side
+
+CP-SAT is a native library, so the browser cannot run it. The page posts the
+instance to a small FastAPI app (`src/ttgen/web.py`), which builds and searches
+the model, runs the same independent verifier the CLI runs, and returns the
+meeting list as JSON. The exports come from the identical `report` functions
+the CLI calls, so the terminal and the browser can never disagree.
 
 ---
 
@@ -161,13 +285,16 @@ options in front of the department instead of one take-it-or-leave-it grid.
 
 ```
 data/amcs_sem2.yaml     the instance: real courses, staff and rooms from the PDF
+data/tiny_demo.yaml     a one-class demo instance that solves instantly
 src/ttgen/config.py     time grid (periods, breaks, legal lab blocks) + weights
 src/ttgen/data.py       instance model, YAML loader, data validation
 src/ttgen/preflight.py  counting arguments that prove infeasibility early
 src/ttgen/model.py      the CP-SAT model — hard constraints, then soft
 src/ttgen/verify.py     independent re-check of a solution
 src/ttgen/report.py     class / staff / room views, CSV + HTML export
-src/ttgen/cli.py        tt check | workload | solve
+src/ttgen/cli.py        tt check | workload | solve | web
+src/ttgen/web.py        FastAPI app: JSON API over the same solver
+src/ttgen/static/       the single-page browser UI
 tests/                  one test per hard constraint, on tiny fast instances
 ```
 

@@ -8,9 +8,11 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.115.0",
     "ortools>=9.15.6755",
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
+    "uvicorn>=0.30.0",
 ]
 
 [build-system]

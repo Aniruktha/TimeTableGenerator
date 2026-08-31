@@ -82,6 +82,7 @@ class Weights:
     load_imbalance: int = 4        # S11 uneven periods-per-day for a class
     room_churn: int = 1            # S10 distinct rooms a section is spread over
     two_labs_per_day: int = 6      # S13 a class doing two labs on one day
+    free_bunching: int = 12        # S14 a day carrying any free period at all
     early_lab: int = 0             # S4  labs late in the day (0 = don't care)
 
     @classmethod

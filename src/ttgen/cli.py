@@ -147,6 +147,21 @@ def cmd_solve(args) -> int:
     return 0
 
 
+def cmd_web(args) -> int:
+    try:
+        from .web import serve
+    except ImportError as exc:                      # pragma: no cover
+        console.print(f"[red]the web UI needs fastapi and uvicorn: {exc}[/red]")
+        console.print("[dim]uv sync[/dim]")
+        return 2
+    console.print(
+        f"[bold]timetable generator[/bold] on [cyan]http://{args.host}:{args.port}[/cyan]"
+        "  [dim]ctrl-c to stop[/dim]"
+    )
+    serve(host=args.host, port=args.port, reload=args.reload)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="tt", description="AMCS timetable generator")
     ap.add_argument("--data", default=DEFAULT_DATA, help=f"instance YAML (default {DEFAULT_DATA})")
@@ -165,8 +180,18 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--log", action="store_true", help="stream the CP-SAT search log")
     s.add_argument("--out", default="out", help="directory for csv/html exports")
 
+    w = sub.add_parser("web", help="serve the browser UI")
+    w.add_argument("--host", default="127.0.0.1", help="bind address")
+    w.add_argument("--port", type=int, default=8000, help="port")
+    w.add_argument("--reload", action="store_true", help="restart on code changes")
+
     args = ap.parse_args(argv)
-    return {"check": cmd_check, "workload": cmd_workload, "solve": cmd_solve}[args.cmd](args)
+    return {
+        "check": cmd_check,
+        "workload": cmd_workload,
+        "solve": cmd_solve,
+        "web": cmd_web,
+    }[args.cmd](args)
 
 
 if __name__ == "__main__":

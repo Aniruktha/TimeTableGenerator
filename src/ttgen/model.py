@@ -90,6 +90,7 @@ class TimetableModel:
         self._soft_late_periods()
         self._soft_adjacent_days()
         self._soft_load_balance()
+        self._soft_free_bunching()
         self._soft_room_churn()
         self._soft_lab_spacing()
         self._objective()
@@ -345,7 +346,9 @@ class TimetableModel:
     def _soft_load_balance(self) -> None:                      # S11
         m, grid = self.m, self.grid
         n_days = len(grid.days)
-        for gid in self.inst.groups:
+        for gid, grp in self.inst.groups.items():
+            if grp.free_policy == "bunched":
+                continue          # deliberately uneven days are the whole point
             demand = sum(u[0].hours for u in self.inst.occupancy_units(gid))
             target = round(demand / n_days)
             for d in grid.days:
@@ -353,6 +356,42 @@ class TimetableModel:
                 m.Add(dev >= self.load[gid, d] - target)
                 m.Add(dev >= target - self.load[gid, d])
                 self._pen["load_imbalance"].append(dev)
+
+    def _soft_free_bunching(self) -> None:                     # S14
+        """Herd a class's free periods onto as few days as possible.
+
+        A week holds a fixed number of free periods -- slots minus teaching --
+        so nothing here creates or destroys any; this only moves them.
+
+        What gets penalised is a *part-full* day: one with at least one class
+        and at least one free period.  Deliberately not "any day with a free
+        period", which would score a completely free day the same as a day
+        with one awkward hole in it and give the search no reason to prefer
+        the day off.  Under this measure the cheapest week is made of days
+        that are either full or empty, which is exactly the ask.
+
+        Only classes that opted in are included -- for everyone else
+        `load_imbalance` is pulling the other way, towards even days.
+        """
+        m, grid = self.m, self.grid
+        full = len(grid.periods)
+        for gid, grp in self.inst.groups.items():
+            if grp.free_policy != "bunched":
+                continue
+            for d in grid.days:
+                load = self.load[gid, d]
+                has_class = m.NewBoolVar(f"any[{gid},{d}]")
+                m.Add(load >= 1).OnlyEnforceIf(has_class)
+                m.Add(load == 0).OnlyEnforceIf(has_class.Not())
+
+                has_free = m.NewBoolVar(f"hasfree[{gid},{d}]")
+                m.Add(load <= full - 1).OnlyEnforceIf(has_free)
+                m.Add(load == full).OnlyEnforceIf(has_free.Not())
+
+                part = m.NewBoolVar(f"partday[{gid},{d}]")
+                m.AddBoolAnd([has_class, has_free]).OnlyEnforceIf(part)
+                m.AddBoolOr([has_class.Not(), has_free.Not()]).OnlyEnforceIf(part.Not())
+                self._pen["free_bunching"].append(part)
 
     def _soft_room_churn(self) -> None:                        # S10
         m, grid = self.m, self.grid

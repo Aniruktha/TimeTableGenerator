@@ -1,0 +1,1616 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timetable Maker</title>
+<style>
+/* Deliberately a single light theme. The people using this are looking at a
+   printed-timetable-shaped thing; a dark UI fights that. */
+:root{
+  --bg:#f6f4f1; --card:#fff; --ink:#332f2b; --muted:#847b72; --line:#e8e2db;
+  --brand:#5b57d1; --brand-soft:#eeedfd; --brand-ink:#403cae;
+  --green:#0f7a52; --green-soft:#e7f6ef;
+  --amber:#a86a12; --amber-soft:#fdf3e3;
+  --red:#c0392b; --red-soft:#fceeec;
+  --lab:#e9f2ff; --activity:#fff5e0; --free:#faf9f7;
+  --shadow:0 1px 2px rgba(40,30,20,.05), 0 6px 18px rgba(40,30,20,.05);
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --r:14px;
+}
+*{box-sizing:border-box}
+html{color-scheme:light}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+h1,h2,h3{margin:0;font-weight:650;letter-spacing:-.015em}
+p{margin:0}
+button,input,select,textarea{font:inherit;color:inherit}
+
+.wrap{max-width:1080px;margin:0 auto;padding:0 20px}
+
+/* ---------------------------------------------------------------- header */
+header{background:var(--card);border-bottom:1px solid var(--line)}
+.hrow{display:flex;align-items:center;gap:14px;padding:16px 0}
+.logo{width:34px;height:34px;border-radius:10px;background:var(--brand);
+  display:grid;place-items:center;color:#fff;font-weight:700;flex:none}
+.htext h1{font-size:17px}
+.htext p{font-size:13px;color:var(--muted)}
+.spacer{flex:1}
+
+/* ----------------------------------------------------------------- steps */
+.steps{display:flex;gap:6px;overflow-x:auto;padding:0 0 14px}
+.step{display:flex;align-items:center;gap:8px;padding:7px 13px;border-radius:999px;
+  border:1px solid var(--line);background:var(--card);cursor:pointer;
+  font-size:13.5px;white-space:nowrap;color:var(--muted);transition:.15s}
+.step:hover{border-color:var(--brand);color:var(--brand)}
+.step .n{width:20px;height:20px;border-radius:50%;background:var(--bg);
+  display:grid;place-items:center;font-size:11.5px;font-weight:700;flex:none}
+.step.on{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
+.step.on .n{background:rgba(255,255,255,.25);color:#fff}
+.step.done .n{background:var(--green-soft);color:var(--green)}
+.step.done{color:var(--ink)}
+
+/* ----------------------------------------------------------------- cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:var(--shadow);margin-bottom:18px;overflow:hidden}
+.card>.head{padding:20px 22px 0}
+.card>.head h2{font-size:19px}
+.card>.head .lede{color:var(--muted);font-size:14px;margin-top:6px;max-width:66ch}
+.card>.inner{padding:20px 22px 22px}
+.sec-title{font-size:13px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.06em;color:var(--muted);margin:24px 0 10px}
+.sec-title:first-child{margin-top:0}
+
+/* --------------------------------------------------------------- buttons */
+.btn{padding:9px 15px;border-radius:10px;border:1px solid var(--line);
+  background:var(--card);cursor:pointer;font-size:14px;font-weight:550;
+  transition:.15s;display:inline-flex;align-items:center;gap:7px}
+.btn:hover:not(:disabled){border-color:var(--brand);color:var(--brand);
+  background:var(--brand-soft)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+.btn.primary:hover:not(:disabled){background:var(--brand-ink);color:#fff}
+.btn.big{padding:13px 24px;font-size:15.5px;border-radius:12px}
+.btn.danger:hover{border-color:var(--red);color:var(--red);background:var(--red-soft)}
+.btn.tiny{padding:4px 9px;font-size:12.5px;border-radius:8px}
+.btnrow{display:flex;gap:10px;flex-wrap:wrap}
+
+/* ---------------------------------------------------------------- fields */
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}
+.f label{display:block;font-size:13px;font-weight:600;margin-bottom:5px}
+.f .help{font-size:12.5px;color:var(--muted);margin-top:5px}
+input[type=text],input[type=number],input[type=time],select,textarea{
+  width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:10px;
+  background:var(--card);transition:.15s}
+input:focus,select:focus,textarea:focus{outline:0;border-color:var(--brand);
+  box-shadow:0 0 0 3px var(--brand-soft)}
+select{appearance:none;background-image:
+  linear-gradient(45deg,transparent 50%,var(--muted) 50%),
+  linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+  background-position:calc(100% - 16px) 52%,calc(100% - 11px) 52%;
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:34px}
+
+.toggles{display:flex;gap:7px;flex-wrap:wrap}
+.tg{padding:6px 12px;border-radius:9px;border:1px solid var(--line);
+  background:var(--card);cursor:pointer;font-size:13px;transition:.15s}
+.tg:hover{border-color:var(--brand)}
+.tg.on{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
+.tg.warnon{background:var(--red-soft);border-color:var(--red);color:var(--red);font-weight:600}
+
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;
+  border-radius:8px;background:var(--bg);border:1px solid var(--line);font-size:12.5px}
+.chip button{border:0;background:none;cursor:pointer;color:var(--muted);
+  padding:0;line-height:1;font-size:14px}
+.chip button:hover{color:var(--red)}
+
+/* --------------------------------------------------------------- tables */
+table.list{border-collapse:collapse;width:100%;font-size:14px}
+table.list th{text-align:left;font-size:11.5px;text-transform:uppercase;
+  letter-spacing:.05em;color:var(--muted);padding:8px 10px;border-bottom:1px solid var(--line)}
+table.list td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+table.list tr:last-child td{border-bottom:0}
+table.list td.num,table.list th.num{text-align:right;font-variant-numeric:tabular-nums}
+table.list td.act{text-align:right;white-space:nowrap}
+.tag{display:inline-block;padding:2px 8px;border-radius:7px;font-size:12px;font-weight:600}
+.tag.theory{background:var(--bg);color:var(--muted)}
+.tag.lab{background:var(--lab);color:#2a5ea8}
+.tag.activity{background:var(--activity);color:var(--amber)}
+.tag.classroom{background:var(--bg);color:var(--muted)}
+
+.empty{padding:34px 18px;text-align:center;color:var(--muted);
+  border:1px dashed var(--line);border-radius:12px;background:var(--free)}
+.empty b{display:block;color:var(--ink);margin-bottom:4px}
+
+/* --------------------------------------------------------------- notices */
+.note{padding:13px 15px;border-radius:11px;font-size:14px;margin:14px 0;
+  display:flex;gap:10px;align-items:flex-start}
+.note b{font-weight:650}
+.note.info{background:var(--brand-soft);color:var(--brand-ink)}
+.note.ok{background:var(--green-soft);color:var(--green)}
+.note.warn{background:var(--amber-soft);color:var(--amber)}
+.note.bad{background:var(--red-soft);color:var(--red)}
+.note ul{margin:7px 0 0;padding-left:18px}
+.note li{margin:3px 0}
+.note .ico{font-size:16px;line-height:1.3}
+
+/* -------------------------------------------------------------- importer */
+.import{border:1px dashed var(--line);border-radius:12px;padding:14px 16px;
+  background:var(--free);margin-top:16px}
+.import h4{margin:0 0 4px;font-size:14px;font-weight:650}
+.import p{font-size:13px;color:var(--muted)}
+.import code{font:12.5px var(--mono);background:var(--card);padding:1px 5px;
+  border-radius:5px;border:1px solid var(--line)}
+
+/* -------------------------------------------------------------- footer nav */
+.nav{display:flex;gap:10px;align-items:center;padding:16px 0 40px}
+
+/* -------------------------------------------------------------- results */
+.statusbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;
+  padding:16px 22px;border-bottom:1px solid var(--line);background:var(--free)}
+.pill{padding:4px 11px;border-radius:999px;font-size:13px;font-weight:650}
+.pill.ok{background:var(--green-soft);color:var(--green)}
+.pill.warn{background:var(--amber-soft);color:var(--amber)}
+.pill.bad{background:var(--red-soft);color:var(--red)}
+.tabs{display:flex;gap:3px;padding:0 16px;border-bottom:1px solid var(--line);
+  overflow-x:auto;background:var(--card)}
+.tab{padding:12px 14px;border:0;background:none;cursor:pointer;font-size:14px;
+  color:var(--muted);border-bottom:2px solid transparent;white-space:nowrap}
+.tab:hover{color:var(--ink)}
+.tab.on{color:var(--brand);border-bottom-color:var(--brand);font-weight:650}
+.view{padding:20px 22px}
+
+table.tt{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px;
+  margin-bottom:6px}
+table.tt th,table.tt td{border-right:1px solid var(--line);
+  border-bottom:1px solid var(--line);padding:7px 6px;text-align:center;
+  vertical-align:top}
+table.tt tr th:first-child,table.tt tr td:first-child{border-left:1px solid var(--line)}
+table.tt tr:first-child th{border-top:1px solid var(--line)}
+table.tt tr:first-child th:first-child{border-top-left-radius:10px}
+table.tt tr:first-child th:last-child{border-top-right-radius:10px}
+table.tt th{background:var(--free);font-size:11.5px;font-weight:650;color:var(--muted);
+  white-space:nowrap}
+table.tt td.day{background:var(--free);font-weight:650;text-align:left;
+  white-space:nowrap;width:52px}
+table.tt td.free{background:var(--free);color:#d9d3cb}
+table.tt td.lab{background:var(--lab)}
+table.tt td.activity{background:var(--activity)}
+table.tt td.na{background:var(--red-soft);color:var(--red);font-size:11px}
+.brk{border-left:2px solid #cfc7be!important}
+.code{font-weight:650;display:block;font-size:12.5px}
+.sub{color:var(--muted);font-size:11px;display:block;line-height:1.35}
+hr.split{border:0;border-top:1px dashed var(--line);margin:5px 0}
+.gtitle{font-size:15px;font-weight:650;margin:22px 0 8px}
+.gtitle:first-child{margin-top:0}
+.gtitle small{font-weight:400;color:var(--muted);font-size:13px}
+
+.occ{display:flex;gap:7px}
+.occ .d{display:flex;gap:2px}
+.occ i{width:12px;height:17px;border-radius:3px;background:var(--free);
+  border:1px solid var(--line);display:block}
+.occ i.on{background:var(--brand);border-color:var(--brand)}
+.bar{height:7px;border-radius:4px;background:var(--brand);opacity:.8}
+iframe.preview{width:100%;height:520px;border:1px solid var(--line);
+  border-radius:12px;background:#fff}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);
+  margin-bottom:14px;align-items:center}
+.legend span{display:flex;align-items:center;gap:6px}
+.sw{width:12px;height:12px;border-radius:4px;border:1px solid var(--line);display:inline-block}
+
+.spinner{width:16px;height:16px;border:2px solid var(--line);
+  border-top-color:var(--brand);border-radius:50%;animation:spin .7s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+#toast{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:60;
+  background:var(--ink);color:#fff;padding:10px 18px;border-radius:11px;
+  font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.2);max-width:82vw}
+#toast.bad{background:var(--red)}
+.libitem{display:flex;align-items:center;gap:10px;padding:11px 13px;
+  border:1px solid var(--line);border-radius:11px;background:var(--card);
+  margin-bottom:8px}
+.libitem .who{flex:1;min-width:0}
+.libitem b{display:block;font-size:14px}
+.libitem span.meta{color:var(--muted);font-size:12.5px}
+.overlay{position:fixed;inset:0;background:rgba(40,32,24,.35);display:grid;
+  place-items:center;z-index:50;padding:20px}
+.overlay .box{background:var(--card);border-radius:16px;padding:28px 32px;
+  box-shadow:0 20px 50px rgba(0,0,0,.2);text-align:center;max-width:400px}
+.overlay .box h3{font-size:17px;margin-bottom:8px}
+.overlay .box p{color:var(--muted);font-size:14px}
+.overlay .spinner{margin:0 auto 16px;width:26px;height:26px;border-width:3px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap hrow">
+    <div class="logo">TT</div>
+    <div class="htext">
+      <h1>Timetable Maker</h1>
+      <p>Build a clash-free weekly timetable</p>
+    </div>
+    <div class="spacer"></div>
+    <div class="btnrow">
+      <button class="btn tiny" id="save">Save to this site</button>
+      <button class="btn tiny" id="download">Download as file</button>
+      <button class="btn tiny" id="open">Open a file</button>
+      <button class="btn tiny danger" id="reset">Start over</button>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="steps" id="steps"></nav>
+  <div id="main"></div>
+  <div class="nav" id="nav"></div>
+</div>
+
+<input type="file" id="filepick" hidden>
+<div id="toast" hidden></div>
+<div class="overlay" id="overlay" hidden>
+  <div class="box">
+    <div class="spinner"></div>
+    <h3 id="ovtitle">Working…</h3>
+    <p id="ovtext"></p>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* =====================================================================
+   State. This object IS the instance the server understands, so nothing
+   has to be translated on the way out -- the form edits it in place.
+   ===================================================================== */
+
+const DAYS_ALL = ["MON","TUE","WED","THU","FRI","SAT","SUN"];
+
+function blankSetup() {
+  return {
+    name: "My timetable",
+    grid: {
+      days: ["MON","TUE","WED","THU","FRI"],
+      periods: [
+        {id:1,start:"08:30",end:"09:20"}, {id:2,start:"09:20",end:"10:10"},
+        {id:3,start:"10:30",end:"11:20"}, {id:4,start:"11:20",end:"12:10"},
+        {id:5,start:"13:40",end:"14:30"}, {id:6,start:"14:30",end:"15:20"},
+        {id:7,start:"15:30",end:"16:20"}, {id:8,start:"16:20",end:"17:10"},
+      ],
+      blocks: [[1,2],[3,4],[5,6],[7,8]],
+    },
+    blocked_slots: [],
+    rooms: [], staff: [], groups: [], courses: [],
+  };
+}
+
+let S = blankSetup();
+let step = 0;
+let result = null;      // last solve response
+let tab = "classes";
+let staffPick = null;
+let editing = null;     // {section, index} while a row is being edited
+
+const STEPS = [
+  {key:"start",    label:"Start"},
+  {key:"rooms",    label:"Rooms"},
+  {key:"teachers", label:"Teachers"},
+  {key:"classes",  label:"Classes"},
+  {key:"subjects", label:"Subjects"},
+  {key:"generate", label:"Generate"},
+];
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* The solver's own messages are precise but written for whoever wrote the
+   model. These rewrite the ones people actually hit into something that says
+   what to go and change. Anything unrecognised falls through mostly intact. */
+const PHRASES = [
+  [/^(\S+?):(\S+?) section \d+: no room is a (\w+) with >= (\d+) seats and facilities (.+)$/,
+   (m) => `${m[2]} needs a ${m[3] === "lab" ? "lab" : "classroom"} holding at least ` +
+     `${m[4]} students${m[5] !== "[]" ? ` with ${m[5].replace(/[\[\]']/g,"")}` : ""}, ` +
+     `and you don't have one. Add a bigger ${m[3]}, or split the subject into batches ` +
+     `so each one is smaller.`],
+  [/^(\S+?):(\S+?) section \d+: no staff assigned$/,
+   (m) => `${m[2]} has no teacher. Open it under Subjects and choose one.`],
+  [/^(\S+?):(\S+?) section \d+: unknown staff '(.+)'$/,
+   (m) => `${m[2]} refers to a teacher (${m[3]}) who is not in your list.`],
+  [/^(\S+?):(\S+?): lab has (\d+)h; labs run in 2-period blocks$/,
+   (m) => `${m[2]} is a lab with ${m[3]} periods a week. Labs run two periods at a ` +
+     `time, so make it an even number.`],
+  [/^(\S+?):(\S+?) \((.+?)\): (\d+)h at max_per_day=(\d+) needs more than the (\d+) distinct day\(s\) available to its staff$/,
+   (m) => `${m[2]} (${m[3]}) needs ${m[4]} periods on ${m[4]} different days, but its ` +
+     `teacher is only free on ${m[6]}. Either free up more days for them, or give the ` +
+     `subject to someone else.`],
+  [/^(\S+?):(\S+?) \((.+?)\): needs (\d+) lab blocks on distinct days, but only (\d+) day\(s\) have a free block for its staff$/,
+   (m) => `${m[2]} (${m[3]}) needs ${m[4]} lab sessions on different days, but its ` +
+     `teacher only has ${m[5]} day(s) with a free two-period slot.`],
+  [/^(.+?): assigned (\d+) periods but only (\d+) slots are available to them$/,
+   (m) => `${m[1]} is down to teach ${m[2]} periods a week but is only free for ` +
+     `${m[3]}. Reduce their subjects, or tick fewer days off for them.`],
+  [/^(.+?): assigned (\d+) periods but max_periods_per_day=(\d+) caps the week at (\d+)$/,
+   (m) => `${m[1]} is down to teach ${m[2]} periods a week, but at most ${m[3]} a day ` +
+     `that only comes to ${m[4]}. Raise their daily limit or give them less.`],
+  [/^(.+?): (\d+) periods of teaching demanded but only (\d+) slots exist in the week$/,
+   (m) => `${m[1]} has ${m[2]} periods of subjects but only ${m[3]} slots in the week. ` +
+     `Cut some hours, or add more periods to the day.`],
+  [/^(.+?): (\d+) periods demanded but max_periods_per_day=(\d+) caps the week at (\d+)$/,
+   (m) => `${m[1]} has ${m[2]} periods of subjects, but "most periods in a day" of ` +
+     `${m[3]} only allows ${m[4]} a week. Raise that limit.`],
+  [/^(.+?): only (\d+) periods of teaching, but min_periods_per_day=(\d+) requires at least (\d+)$/,
+   (m) => `${m[1]} only has ${m[2]} periods of subjects, but "fewest periods in a day" ` +
+     `of ${m[3]} would need ${m[4]}. Lower that, or add more subjects.`],
+  [/^rooms of kind '(\w+)': (\d+) room-periods needed but only .*= (\d+) available$/,
+   (m) => `You need ${m[2]} ${m[1]} bookings across the week but your ${m[1]}s only ` +
+     `offer ${m[3]}. Add another ${m[1]}.`],
+  [/^labs: (\d+) \(batch x block\) bookings needed but only .*= (\d+) available$/,
+   (m) => `Your labs need ${m[1]} bookings but there is only room for ${m[2]}. Add ` +
+     `another lab, or use fewer batches.`],
+];
+
+function humanise(text) {
+  for (const [re, fn] of PHRASES) {
+    const m = String(text).match(re);
+    if (m) return fn(m);
+  }
+  return String(text).replace(/^[A-Z0-9_-]+:/, "");   // at least drop the internal id
+}
+
+function problemList(title, items) {
+  return `<div class="note bad"><span class="ico">&#9888;</span><span><b>${title}</b>
+    <ul>${items.map(x => `<li>${esc(humanise(x))}</li>`).join("")}</ul></span></div>`;
+}
+
+function errorNote(msg) {
+  const parts = String(msg).split(/\n\s*-\s*/);
+  const items = parts.slice(1).filter(Boolean);
+  return items.length
+    ? problemList("Something in your setup doesn't add up:", items)
+    : `<div class="note bad"><span class="ico">&#9888;</span><span>
+        <b>That didn't work.</b><br>${esc(humanise(msg))}</span></div>`;
+}
+
+/* Ids must be stable, unique and safe to reference from other rows. */
+function slug(name, taken) {
+  let base = String(name).toUpperCase().replace(/[^A-Z0-9]+/g,"_")
+    .replace(/^_+|_+$/g,"").slice(0,40) || "ITEM";
+  if (!taken) return base;
+  let id = base, n = 2;
+  while (taken.includes(id)) id = `${base}_${n++}`;
+  return id;
+}
+const slotsInWeek = () => S.grid.days.length * S.grid.periods.length;
+
+/* Periods a class actually occupies. An elective basket runs its members side
+   by side in one slot, so it counts once -- same rule the solver uses. */
+function demandFor(gid) {
+  const seen = new Set();
+  return S.courses.filter(c => c.group === gid).reduce((n, c) => {
+    if (c.basket) { if (seen.has(c.basket)) return n; seen.add(c.basket); }
+    return n + (+c.hours || 0);
+  }, 0);
+}
+const freeFor = (gid) => slotsInWeek() - demandFor(gid);
+
+/* The shortest day that would leave `want` free periods a week, and what it
+   would actually leave -- days x periods rarely lands on the number exactly. */
+function shorterDay(gid, want = 1) {
+  const demand = demandFor(gid), days = S.grid.days.length;
+  const per = Math.ceil((demand + want) / days);
+  return {periods: per, free: days * per - demand};
+}
+
+const FREE_POLICIES = {
+  spread:      "Let the timetable decide",
+  daily_break: "At least one free period every day",
+  packed:      "Pack the week — at most one free period a day",
+  bunched:     "Bunch them together — aim for whole free days",
+};
+
+const roomIds  = () => S.rooms.map(r => r.id);
+const staffIds = () => S.staff.map(s => s.id);
+const groupIds = () => S.groups.map(g => g.id);
+const staffName = (id) => (S.staff.find(s => s.id === id) || {}).name || id;
+const groupName = (id) => (S.groups.find(g => g.id === id) || {}).name || id;
+
+/* ============================================================ overlays */
+
+function working(title, text) {
+  $("ovtitle").textContent = title;
+  $("ovtext").textContent = text || "";
+  $("overlay").hidden = false;
+}
+const done = () => { $("overlay").hidden = true; };
+
+/* ============================================================ networking */
+
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({detail:"the server sent something unreadable"}));
+  if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
+  return data;
+}
+
+/* ============================================================== CSV bits */
+
+function parseCSV(text) {
+  const rows = [];
+  let row = [], cell = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"' && text[i+1] === '"') { cell += '"'; i++; }
+      else if (c === '"') q = false;
+      else cell += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") { row.push(cell); cell = ""; }
+    else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else if (c !== "\r") cell += c;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  if (!rows.length) return [];
+  const head = rows[0].map(h => h.trim().toLowerCase());
+  return rows.slice(1)
+    .filter(r => r.some(v => v.trim() !== ""))
+    .map(r => Object.fromEntries(head.map((h,i) => [h, (r[i] ?? "").trim()])));
+}
+
+function download(filename, text, mime) {
+  const url = URL.createObjectURL(new Blob([text], {type: mime || "text/plain"}));
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* Each importable section declares its columns, an example row, and how to
+   turn one CSV row into a record. One place to look when a format changes. */
+const IMPORTS = {
+  rooms: {
+    file: "rooms.csv",
+    cols: ["name","type","seats","facilities"],
+    example: ["Room 101","classroom","60",""],
+    example2: ["Lab A","lab","30","python;java"],
+    hint: "<code>type</code> is <code>classroom</code> or <code>lab</code>. " +
+          "<code>facilities</code> is optional, separate several with <code>;</code>.",
+    make: (r, taken) => ({
+      id: slug(r.name || r.id, taken),
+      kind: (r.type || "classroom").toLowerCase() === "lab" ? "lab" : "classroom",
+      capacity: +r.seats || 40,
+      facilities: (r.facilities || "").split(";").map(x=>x.trim()).filter(Boolean),
+    }),
+  },
+  staff: {
+    file: "teachers.csv",
+    cols: ["name","type","unavailable","max_per_day"],
+    example: ["Anand R","regular","",  "6"],
+    example2: ["Deepak N","visiting","MON;WED","4"],
+    hint: "<code>type</code> is <code>regular</code>, <code>visiting</code> or " +
+          "<code>other_dept</code>. <code>unavailable</code> lists whole days " +
+          "they cannot come, separated by <code>;</code>.",
+    make: (r, taken) => ({
+      id: slug(r.name, taken),
+      name: r.name,
+      kind: ({visiting:"visiting", other_dept:"other_dept"})[(r.type||"").toLowerCase()] || "internal",
+      unavailable: (r.unavailable || "").split(";").map(x=>x.trim().toUpperCase())
+        .filter(d => DAYS_ALL.includes(d)).map(d => `${d}:*`),
+      max_periods_per_day: +r.max_per_day || 6,
+    }),
+  },
+  groups: {
+    file: "classes.csv",
+    cols: ["name","students","min_per_day","max_per_day"],
+    example: ["M.Sc. Software Systems","40","2","6"],
+    example2: ["M.Sc. Data Science","35","2","6"],
+    hint: "One row per group of students who must never be in two places at once. " +
+          "<code>min_per_day</code> and <code>max_per_day</code> are optional.",
+    make: (r, taken) => ({
+      id: slug(r.name, taken),
+      name: r.name,
+      strength: +r.students || 40,
+      min_periods_per_day: +r.min_per_day || 0,
+      max_periods_per_day: +r.max_per_day || S.grid.periods.length,
+    }),
+  },
+  courses: {
+    file: "subjects.csv",
+    cols: ["code","title","class","type","hours","teachers"],
+    example: ["DM101","Discrete Mathematics","M.Sc. Software Systems","theory","4","Anand R"],
+    example2: ["DSL104","Data Structures Lab","M.Sc. Software Systems","lab","4","Bhavna S;Chitra M"],
+    hint: "<code>class</code> must match a class name you already added. " +
+          "<code>type</code> is <code>theory</code>, <code>lab</code> or <code>activity</code>. " +
+          "For a <b>lab</b>, each teacher in <code>teachers</code> becomes one batch; " +
+          "for <b>theory</b> they teach together. Lab hours must be even.",
+    make: (r) => {
+      const kind = ({lab:"lab", activity:"activity"})[(r.type||"").toLowerCase()] || "theory";
+      const names = (r.teachers || "").split(";").map(x=>x.trim()).filter(Boolean);
+      const ids = names.map(n => {
+        const hit = S.staff.find(s => s.name.toLowerCase() === n.toLowerCase() || s.id === n);
+        return hit ? hit.id : null;
+      });
+      const g = S.groups.find(x =>
+        x.name.toLowerCase() === (r.class||"").toLowerCase() || x.id === r.class);
+      const roomKind = kind === "lab" ? "lab" : "classroom";
+      const sections = kind === "lab"
+        ? ids.map(id => ({staff:[id], room_kind:roomKind}))
+        : [{staff: ids, room_kind: roomKind}];
+      return {
+        code: r.code, title: r.title || r.code,
+        group: g ? g.id : null,
+        kind, hours: +r.hours || 1,
+        sections: sections.length ? sections : [{staff:[], room_kind:roomKind}],
+        _badStaff: names.filter((n,i) => !ids[i]),
+        _badGroup: g ? null : r.class,
+      };
+    },
+  },
+};
+
+function templateCSV(key) {
+  const c = IMPORTS[key];
+  return [c.cols, c.example, c.example2].map(r => r.join(",")).join("\n") + "\n";
+}
+
+function importRows(key, rows) {
+  const cfg = IMPORTS[key];
+  const problems = [];
+  let added = 0;
+  rows.forEach((r, i) => {
+    const taken = (key === "courses") ? null
+      : {rooms:roomIds, staff:staffIds, groups:groupIds}[key]();
+    const rec = cfg.make(r, taken);
+    const line = i + 2;
+    if (key === "courses") {
+      const badStaff = rec._badStaff, badGroup = rec._badGroup;
+      delete rec._badStaff; delete rec._badGroup;
+      // Drop unresolved teachers, then any section left with nobody in it.
+      rec.sections = rec.sections
+        .map(x => ({...x, staff: (x.staff || []).filter(Boolean)}))
+        .filter(x => x.staff.length);
+
+      // Anything that would make the setup invalid is refused outright -- a
+      // row half-imported here only resurfaces as a baffling error at solve
+      // time, long after the person has forgotten this file.
+      if (!rec.code)
+        return problems.push(`Row ${line}: no subject code — not added.`);
+      if (!rec.group)
+        return problems.push(`Row ${line} (${rec.code}): there is no class called ` +
+          `“${badGroup || ""}” — not added. Add that class first, then import again.`);
+      if (rec.kind === "lab" && rec.hours % 2)
+        return problems.push(`Row ${line} (${rec.code}): a lab runs in blocks of two ` +
+          `periods, so its hours must be even — ${rec.hours} is not, so it was not added.`);
+      if (rec.kind === "lab" && badStaff.length)
+        return problems.push(`Row ${line} (${rec.code}): a lab needs one teacher per ` +
+          `batch, and ${badStaff.join(" / ")} ${badStaff.length > 1 ? "are" : "is"} not ` +
+          `in your teacher list — not added, so you don't end up with fewer batches ` +
+          `than you meant.`);
+      if (!rec.sections.length)
+        return problems.push(`Row ${line} (${rec.code}): ` +
+          (badStaff.length ? `no teacher called ${badStaff.join(" or ")} in your list`
+                           : "no teacher given") + ` — not added.`);
+      if (badStaff.length)
+        problems.push(`Row ${line} (${rec.code}): added, but left off teacher(s) not in ` +
+          `your list — ${badStaff.join(", ")}.`);
+      S.courses.push(rec);
+    } else {
+      if (!(r.name || "").trim()) return problems.push(`Row ${line}: no name, skipped.`);
+      S[key].push(rec);
+    }
+    added++;
+  });
+  return {added, problems};
+}
+
+/* ================================================================ render */
+
+function renderSteps() {
+  $("steps").innerHTML = STEPS.map((s, i) => {
+    const filled = {rooms:S.rooms.length, teachers:S.staff.length,
+                    classes:S.groups.length, subjects:S.courses.length}[s.key];
+    const ok = filled > 0;
+    return `<button class="step ${i===step?"on":""} ${ok&&i!==step?"done":""}" data-step="${i}">
+      <span class="n">${ok && i!==step ? "&#10003;" : i+1}</span>${s.label}${
+      filled ? ` <span style="opacity:.7">(${filled})</span>` : ""}</button>`;
+  }).join("");
+}
+
+function importer(key) {
+  const c = IMPORTS[key];
+  return `<div class="import">
+    <h4>Have a spreadsheet? Import it</h4>
+    <p>A <b>${c.file}</b> file with the columns
+       ${c.cols.map(x=>`<code>${x}</code>`).join(" ")}. ${c.hint}</p>
+    <div class="btnrow" style="margin-top:11px">
+      <button class="btn tiny" data-tpl="${key}">Download blank template</button>
+      <button class="btn tiny" data-imp="${key}">Choose a CSV file…</button>
+    </div>
+  </div>`;
+}
+
+function nav() {
+  const last = step === STEPS.length - 1;
+  $("nav").innerHTML = `
+    ${step > 0 ? `<button class="btn" data-go="${step-1}">&larr; Back</button>` : ""}
+    <div class="spacer"></div>
+    ${!last ? `<button class="btn primary" data-go="${step+1}">Next: ${STEPS[step+1].label} &rarr;</button>` : ""}`;
+}
+
+function render() {
+  renderSteps();
+  $("main").innerHTML = [
+    viewStart, viewRooms, viewTeachers, viewClasses, viewSubjects, viewGenerate
+  ][step]();
+  nav();
+  if (step === 0) { loadSamples(); loadSaved(); }
+  window.scrollTo({top:0, behavior:"smooth"});
+}
+
+/* ------------------------------------------------------------- 1. start */
+
+function viewStart() {
+  return `<div class="card">
+    <div class="head">
+      <h2>Let's build a timetable</h2>
+      <p class="lede">You'll add your rooms, teachers, classes and subjects — then this
+         works out a weekly timetable where nobody is double-booked. Five short steps.</p>
+    </div>
+    <div class="inner">
+      <div class="sec-title">Never done this before?</div>
+      <div class="note info"><span class="ico">&#128161;</span>
+        <span>Load a ready-made example, press <b>Generate</b>, and see what comes out.
+        You can change anything afterwards — nothing is locked in.</span></div>
+      <div class="btnrow" id="samples"><span style="color:var(--muted)">loading examples…</span></div>
+
+      <div class="sec-title">Your saved setups</div>
+      <div id="saved"><span style="color:var(--muted)">loading…</span></div>
+      <p class="hint">Anything you build here can be kept on this site with
+         <b>Save to this site</b> — no downloading, no hunting through folders.
+         Saving under a name you have used before updates that one.</p>
+
+      <div class="sec-title">What should we call it?</div>
+      <div class="f" style="max-width:420px">
+        <input type="text" data-set="name" value="${esc(S.name)}" placeholder="e.g. Semester 2, 2025-26">
+        <p class="help">This name appears at the top of the printed timetable.</p>
+      </div>
+
+      <div class="sec-title">The school week</div>
+      <div class="f">
+        <label>Which days do classes run?</label>
+        <div class="toggles">${DAYS_ALL.map(d =>
+          `<button class="tg ${S.grid.days.includes(d)?"on":""}" data-day="${d}">${d}</button>`).join("")}</div>
+      </div>
+      <div class="f" style="margin-top:18px">
+        <label>Periods in a day</label>
+        <p class="help" style="margin:0 0 10px">Change these only if your college day
+           differs from the default. A two-hour lab always sits inside one shaded pair,
+           so it never runs across a break.</p>
+        <table class="list">
+          <tr><th>#</th><th>Starts</th><th>Ends</th><th></th></tr>
+          ${S.grid.periods.map((p,i) => `<tr>
+            <td><b>Period ${p.id}</b>${i%2===0?' <span class="sub">pair starts</span>':""}</td>
+            <td><input type="time" data-per="${i}" data-k="start" value="${esc(p.start)}"></td>
+            <td><input type="time" data-per="${i}" data-k="end" value="${esc(p.end)}"></td>
+            <td class="act"><button class="btn tiny danger" data-delper="${i}">Remove</button></td>
+          </tr>`).join("")}
+        </table>
+        <div class="btnrow" style="margin-top:10px">
+          <button class="btn tiny" data-addper="1">+ Add a period</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ------------------------------------------------------------- 2. rooms */
+
+function viewRooms() {
+  const rows = S.rooms.map((r,i) => `<tr>
+    <td><b>${esc(r.id)}</b></td>
+    <td><span class="tag ${r.kind}">${r.kind === "lab" ? "Lab" : "Classroom"}</span></td>
+    <td class="num">${r.capacity}</td>
+    <td>${(r.facilities||[]).map(f=>`<span class="chip">${esc(f)}</span>`).join(" ") || "—"}</td>
+    <td class="act">
+      <button class="btn tiny" data-edit="rooms" data-i="${i}">Edit</button>
+      <button class="btn tiny danger" data-del="rooms" data-i="${i}">Delete</button></td>
+  </tr>`).join("");
+
+  const e = editing?.section === "rooms" ? S.rooms[editing.index] : null;
+  return `<div class="card">
+    <div class="head">
+      <h2>Rooms</h2>
+      <p class="lede">Every place a class can happen. Mark the computer labs as
+         <b>Lab</b> — practical subjects will only ever be put in those.</p>
+    </div>
+    <div class="inner">
+      ${S.rooms.length ? `<table class="list">
+        <tr><th>Room</th><th>Type</th><th class="num">Seats</th><th>Facilities</th><th></th></tr>
+        ${rows}</table>`
+      : `<div class="empty"><b>No rooms yet</b>Add your first one below.</div>`}
+
+      <div class="sec-title">${e ? "Edit room" : "Add a room"}</div>
+      <div class="grid2">
+        <div class="f"><label>Room name or number</label>
+          <input type="text" id="r_name" value="${esc(e?e.id:"")}" placeholder="e.g. M201"></div>
+        <div class="f"><label>Type</label>
+          <select id="r_kind">
+            <option value="classroom"${e&&e.kind==="classroom"?" selected":""}>Classroom</option>
+            <option value="lab"${e&&e.kind==="lab"?" selected":""}>Lab</option>
+          </select></div>
+        <div class="f"><label>Seats</label>
+          <input type="number" id="r_cap" min="1" value="${e?e.capacity:60}"></div>
+        <div class="f"><label>Facilities <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+          <input type="text" id="r_fac" value="${esc((e?.facilities||[]).join(", "))}" placeholder="python, java">
+          <p class="help">Only needed if some labs lack software others have.</p></div>
+      </div>
+      <div class="btnrow" style="margin-top:14px">
+        <button class="btn primary" data-save="rooms">${e ? "Save changes" : "Add room"}</button>
+        ${e ? `<button class="btn" data-cancel="1">Cancel</button>` : ""}
+      </div>
+      ${importer("rooms")}
+    </div>
+  </div>`;
+}
+
+/* ---------------------------------------------------------- 3. teachers */
+
+function viewTeachers() {
+  const rows = S.staff.map((s,i) => {
+    const offDays = (s.unavailable||[]).filter(u => /:\*$/.test(u)).map(u => u.split(":")[0]);
+    return `<tr>
+      <td><b>${esc(s.name)}</b></td>
+      <td>${({internal:"Regular", visiting:"Visiting", other_dept:"Other dept"})[s.kind] || s.kind}</td>
+      <td class="num">${s.max_periods_per_day ?? 6}</td>
+      <td>${offDays.length ? offDays.map(d=>`<span class="chip">${d}</span>`).join(" ") : "—"}</td>
+      <td class="act">
+        <button class="btn tiny" data-edit="staff" data-i="${i}">Edit</button>
+        <button class="btn tiny danger" data-del="staff" data-i="${i}">Delete</button></td>
+    </tr>`;
+  }).join("");
+
+  const e = editing?.section === "staff" ? S.staff[editing.index] : null;
+  const off = (e?.unavailable || []).filter(u => /:\*$/.test(u)).map(u => u.split(":")[0]);
+  const other = (e?.unavailable || []).filter(u => !/:\*$/.test(u));
+
+  return `<div class="card">
+    <div class="head">
+      <h2>Teachers</h2>
+      <p class="lede">Everyone who takes a class. If someone only comes in on
+         certain days, tick the days they are <b>not</b> available — the timetable
+         will work around them.</p>
+    </div>
+    <div class="inner">
+      ${S.staff.length ? `<table class="list">
+        <tr><th>Name</th><th>Type</th><th class="num">Max periods/day</th>
+            <th>Days off</th><th></th></tr>${rows}</table>`
+      : `<div class="empty"><b>No teachers yet</b>Add your first one below.</div>`}
+
+      <div class="sec-title">${e ? "Edit teacher" : "Add a teacher"}</div>
+      <div class="grid2">
+        <div class="f"><label>Full name</label>
+          <input type="text" id="s_name" value="${esc(e?e.name:"")}" placeholder="e.g. Janani K"></div>
+        <div class="f"><label>Type</label>
+          <select id="s_kind">
+            <option value="internal"${e&&e.kind==="internal"?" selected":""}>Regular staff</option>
+            <option value="visiting"${e&&e.kind==="visiting"?" selected":""}>Visiting</option>
+            <option value="other_dept"${e&&e.kind==="other_dept"?" selected":""}>From another department</option>
+          </select>
+          <p class="help">Visiting teachers get their classes bunched into as few days as possible.</p></div>
+        <div class="f"><label>Most periods in one day</label>
+          <input type="number" id="s_max" min="1" max="12" value="${e?(e.max_periods_per_day??6):6}"></div>
+      </div>
+      <div class="f" style="margin-top:14px">
+        <label>Days this teacher cannot come in</label>
+        <div class="toggles" id="s_off">${S.grid.days.map(d =>
+          `<button class="tg ${off.includes(d)?"warnon":""}" data-off="${d}">${d}</button>`).join("")}</div>
+        ${other.length ? `<p class="help">Also blocked: ${other.map(o=>`<span class="chip">${esc(o)}</span>`).join(" ")}
+           <br>(kept from your file — edit the file to change these)</p>` : ""}
+      </div>
+      <div class="btnrow" style="margin-top:14px">
+        <button class="btn primary" data-save="staff">${e ? "Save changes" : "Add teacher"}</button>
+        ${e ? `<button class="btn" data-cancel="1">Cancel</button>` : ""}
+      </div>
+      ${importer("staff")}
+    </div>
+  </div>`;
+}
+
+/* ----------------------------------------------------------- 4. classes */
+
+function policyNote(policy, gid) {
+  const P = S.grid.periods.length, days = S.grid.days.length;
+  const demand = gid ? demandFor(gid) : null;
+  if (policy === "daily_break") {
+    const cap = days * (P - 1);
+    const bad = demand !== null && demand > cap;
+    return `Every day keeps at least one period free, so nobody is in class from
+      first bell to last. That caps the week at ${cap} periods${
+      bad ? ` — but this class needs ${demand}, so it will not fit.` : "."}`;
+  }
+  if (policy === "packed") {
+    const floor = days * (P - 1);
+    const bad = demand !== null && demand < floor;
+    return `Days run full — at most one free period each. That needs at least
+      ${floor} periods of subjects${bad
+        ? `, but this class only has ${demand}. Either add more subjects or shorten the day.`
+        : "."}`;
+  }
+  if (policy === "bunched") {
+    return `Free periods get herded onto as few days as possible, so you get whole
+      free days or afternoons instead of odd gaps scattered through the week.
+      Day length is left uneven on purpose.`;
+  }
+  return `The timetable decides where they fall. It already avoids free periods
+    stranded in the middle of a day.`;
+}
+
+function freeSummary(gid) {
+  const demand = demandFor(gid), free = freeFor(gid), slots = slotsInWeek();
+  if (!demand) return "";
+  const alt = shorterDay(gid, 1);
+  return `<div class="note ${free < 0 ? "bad" : "info"}"><span class="ico">&#8505;</span><span>
+    This class has <b>${demand}</b> periods of subjects and the week holds
+    <b>${slots}</b> (${S.grid.days.length} days &times; ${S.grid.periods.length}
+    periods). ${free < 0
+      ? `That is <b>${-free} too many to fit</b> — drop some hours or lengthen the day.`
+      : `So it will have <b>exactly ${free} free period${free === 1 ? "" : "s"}</b> a week,
+         whatever order things go in — scheduling decides <i>where</i> they fall, never
+         how many there are.`}
+    ${free > 1 && alt.periods < S.grid.periods.length
+      ? `<br>To get down to ${alt.free === 1 ? "just 1" : alt.free}, shorten the day to
+         <b>${alt.periods} periods</b> (Start step) — that is the closest
+         ${S.grid.days.length} days can get.`
+      : ""}</span></div>`;
+}
+
+function viewClasses() {
+  const rows = S.groups.map((g,i) => {
+    const subj = S.courses.filter(c => c.group === g.id);
+    const free = freeFor(g.id);
+    return `<tr>
+      <td><b>${esc(g.name)}</b></td>
+      <td class="num">${g.strength}</td>
+      <td class="num">${subj.length}</td>
+      <td class="num">${demandFor(g.id)} / ${slotsInWeek()}</td>
+      <td class="num" style="${free < 0 ? "color:var(--red);font-weight:700" : ""}">${free}</td>
+      <td>${esc(FREE_POLICIES[g.free_policy || "spread"])}</td>
+      <td class="act">
+        <button class="btn tiny" data-edit="groups" data-i="${i}">Edit</button>
+        <button class="btn tiny danger" data-del="groups" data-i="${i}">Delete</button></td>
+    </tr>`;
+  }).join("");
+
+  const e = editing?.section === "groups" ? S.groups[editing.index] : null;
+  const policy = e?.free_policy || "spread";
+  const P = S.grid.periods.length;
+  return `<div class="card">
+    <div class="head">
+      <h2>Classes</h2>
+      <p class="lede">A class is a group of students who move around together.
+         They can never be in two places at once, so each one gets its own timetable.</p>
+    </div>
+    <div class="inner">
+      ${S.groups.length ? `<table class="list">
+        <tr><th>Class</th><th class="num">Students</th><th class="num">Subjects</th>
+            <th class="num">Periods used</th><th class="num">Free</th>
+            <th>Free periods go</th><th></th></tr>${rows}</table>`
+      : `<div class="empty"><b>No classes yet</b>Add your first one below.</div>`}
+
+      <div class="sec-title">${e ? "Edit class" : "Add a class"}</div>
+      ${e ? freeSummary(e.id) : ""}
+      <div class="grid2">
+        <div class="f"><label>Class name</label>
+          <input type="text" id="g_name" value="${esc(e?e.name:"")}" placeholder="e.g. M.Sc. Data Science"></div>
+        <div class="f"><label>Number of students</label>
+          <input type="number" id="g_str" min="1" value="${e?e.strength:40}">
+          <p class="help">Used to pick rooms big enough.</p></div>
+      </div>
+      <div class="f" style="margin-top:14px">
+        <label>Where should the free periods go?</label>
+        <select id="g_policy" style="max-width:460px">${Object.entries(FREE_POLICIES).map(([k,v]) =>
+          `<option value="${k}"${policy===k?" selected":""}>${esc(v)}</option>`).join("")}</select>
+        <p class="help" id="g_policy_note">${policyNote(policy, e?.id)}</p>
+      </div>
+      <div class="grid2" id="g_bounds" style="margin-top:14px" ${policy==="spread"?"":"hidden"}>
+        <div class="f"><label>Fewest periods in a day</label>
+          <input type="number" id="g_min" min="0" max="${P}" value="${e?(e.min_periods_per_day??0):0}">
+          <p class="help">Stops a day with a single lonely class in it.</p></div>
+        <div class="f"><label>Most periods in a day</label>
+          <input type="number" id="g_max" min="1" max="${P}"
+            value="${e?(e.max_periods_per_day??P):P}"></div>
+      </div>
+      <div class="btnrow" style="margin-top:14px">
+        <button class="btn primary" data-save="groups">${e ? "Save changes" : "Add class"}</button>
+        ${e ? `<button class="btn" data-cancel="1">Cancel</button>` : ""}
+      </div>
+      ${importer("groups")}
+    </div>
+  </div>`;
+}
+
+/* ---------------------------------------------------------- 5. subjects */
+
+function viewSubjects() {
+  if (!S.groups.length || !S.staff.length) {
+    return `<div class="card"><div class="head"><h2>Subjects</h2></div><div class="inner">
+      <div class="note warn"><span class="ico">&#9888;</span><span>
+        Add at least one <b>class</b> and one <b>teacher</b> first — a subject has to
+        belong to a class and be taught by someone.</span></div>
+      <div class="btnrow">
+        <button class="btn" data-go="3">Go to Classes</button>
+        <button class="btn" data-go="2">Go to Teachers</button>
+      </div></div></div>`;
+  }
+
+  const rows = S.courses.map((c,i) => {
+    const who = (c.sections||[]).map(s => (s.staff||[]).map(staffName).join(" + "));
+    return `<tr>
+      <td><b>${esc(c.code)}</b><span class="sub">${esc(c.title)}</span></td>
+      <td>${esc(groupName(c.group))}</td>
+      <td><span class="tag ${c.kind}">${c.kind === "lab" ? "Lab" :
+           c.kind === "activity" ? "Activity" : "Theory"}</span></td>
+      <td class="num">${c.hours}</td>
+      <td>${c.kind === "lab" && who.length > 1
+            ? who.map((w,j)=>`<span class="chip">Batch ${j+1}: ${esc(w)}</span>`).join(" ")
+            : esc(who.join(", ") || "—")}${c.basket ? ` <span class="chip">elective: ${esc(c.basket)}</span>` : ""}</td>
+      <td class="act">
+        <button class="btn tiny" data-edit="courses" data-i="${i}">Edit</button>
+        <button class="btn tiny danger" data-del="courses" data-i="${i}">Delete</button></td>
+    </tr>`;
+  }).join("");
+
+  const e = editing?.section === "courses" ? S.courses[editing.index] : null;
+  const kind = e?.kind || "theory";
+  const secs = e?.sections || [{staff:[]}];
+  const teacherOpts = (sel) => S.staff.map(s =>
+    `<option value="${esc(s.id)}"${sel===s.id?" selected":""}>${esc(s.name)}</option>`).join("");
+
+  return `<div class="card">
+    <div class="head">
+      <h2>Subjects</h2>
+      <p class="lede">What each class is taught, how many periods a week, and by whom.
+         A practical that splits students into batches gets one teacher per batch.</p>
+    </div>
+    <div class="inner">
+      ${S.courses.length ? `<table class="list">
+        <tr><th>Subject</th><th>Class</th><th>Type</th><th class="num">Hrs/week</th>
+            <th>Taught by</th><th></th></tr>${rows}</table>`
+      : `<div class="empty"><b>No subjects yet</b>Add your first one below.</div>`}
+
+      <div class="sec-title">${e ? "Edit subject" : "Add a subject"}</div>
+      <div class="grid2">
+        <div class="f"><label>Code</label>
+          <input type="text" id="c_code" value="${esc(e?e.code:"")}" placeholder="e.g. 23XW21"></div>
+        <div class="f"><label>Name</label>
+          <input type="text" id="c_title" value="${esc(e?e.title:"")}" placeholder="e.g. Machine Learning"></div>
+        <div class="f"><label>Which class?</label>
+          <select id="c_group">${S.groups.map(g =>
+            `<option value="${esc(g.id)}"${e&&e.group===g.id?" selected":""}>${esc(g.name)}</option>`).join("")}</select></div>
+        <div class="f"><label>Type</label>
+          <select id="c_kind">
+            <option value="theory"${kind==="theory"?" selected":""}>Theory</option>
+            <option value="lab"${kind==="lab"?" selected":""}>Lab / practical</option>
+            <option value="activity"${kind==="activity"?" selected":""}>Activity</option>
+          </select></div>
+        <div class="f"><label>Periods per week</label>
+          <input type="number" id="c_hours" min="1" max="20" value="${e?e.hours:3}">
+          <p class="help" id="c_hint">A lab runs in 2-period blocks, so its total must be even.</p></div>
+        <div class="f"><label>How many batches?</label>
+          <input type="number" id="c_batches" min="1" max="6" value="${secs.length}">
+          <p class="help">Labs only. Students split into this many groups, each in its own lab.</p></div>
+      </div>
+      <div class="f" style="margin-top:14px">
+        <label>Teacher${secs.length>1?"s — one per batch":""}</label>
+        <div class="grid2" id="c_staff">
+          ${secs.map((s,j) => `<div class="f">
+            ${secs.length>1?`<label style="font-weight:500;color:var(--muted)">Batch ${j+1}</label>`:""}
+            <select data-sec="${j}">${teacherOpts((s.staff||[])[0])}</select>
+          </div>`).join("")}
+        </div>
+      </div>
+      <div class="btnrow" style="margin-top:14px">
+        <button class="btn primary" data-save="courses">${e ? "Save changes" : "Add subject"}</button>
+        ${e ? `<button class="btn" data-cancel="1">Cancel</button>` : ""}
+      </div>
+      ${importer("courses")}
+    </div>
+  </div>`;
+}
+
+/* ---------------------------------------------------------- 6. generate */
+
+function viewGenerate() {
+  const checks = [
+    {ok: S.rooms.length  > 0, label: `${S.rooms.length} room${S.rooms.length===1?"":"s"}`,     fix: 1},
+    {ok: S.staff.length  > 0, label: `${S.staff.length} teacher${S.staff.length===1?"":"s"}`,  fix: 2},
+    {ok: S.groups.length > 0, label: `${S.groups.length} class${S.groups.length===1?"":"es"}`, fix: 3},
+    {ok: S.courses.length> 0, label: `${S.courses.length} subject${S.courses.length===1?"":"s"}`, fix: 4},
+  ];
+  const ready = checks.every(c => c.ok);
+
+  return `<div class="card">
+    <div class="head">
+      <h2>Generate the timetable</h2>
+      <p class="lede">Everything below has to be filled in before a timetable can be
+         worked out.</p>
+    </div>
+    <div class="inner">
+      <table class="list">
+        ${checks.map(c => `<tr>
+          <td style="width:34px;font-size:17px">${c.ok
+            ? '<span style="color:var(--green)">&#10003;</span>'
+            : '<span style="color:var(--red)">&#10007;</span>'}</td>
+          <td>${c.ok ? esc(c.label) : `<b>Missing</b> — ${esc(STEPS[c.fix].label.toLowerCase())}`}</td>
+          <td class="act">${c.ok ? "" :
+            `<button class="btn tiny" data-go="${c.fix}">Add now</button>`}</td>
+        </tr>`).join("")}
+      </table>
+
+      <div class="sec-title">How hard should it try?</div>
+      <div class="toggles" id="effort">
+        <button class="tg" data-effort="15">Quick — 15 seconds</button>
+        <button class="tg on" data-effort="60">Balanced — 1 minute</button>
+        <button class="tg" data-effort="180">Thorough — 3 minutes</button>
+      </div>
+      <p class="help" style="margin-top:8px;color:var(--muted);font-size:13px">
+        Longer usually means fewer gaps in everyone's day. You can stop at any answer
+        and try again — a different attempt gives a different timetable.</p>
+
+      <div class="btnrow" style="margin-top:24px">
+        <button class="btn big" id="btncheck" ${ready?"":"disabled"}>Check for problems</button>
+        <button class="btn big primary" id="btngen" ${ready?"":"disabled"}>Generate timetable</button>
+      </div>
+      <div id="genmsg"></div>
+    </div>
+  </div>`;
+}
+
+/* ================================================================ results */
+
+const TABS = {
+  classes:"Class timetables", teachers:"Teacher timetables", rooms:"Room usage",
+  quality:"How good is it", download:"Print &amp; download",
+};
+
+function showResult() {
+  const d = result, i = d.instance;
+  const clean = d.violations.length === 0;
+  $("steps").innerHTML = "";
+  $("nav").innerHTML = "";
+  $("main").innerHTML = `<div class="card">
+    <div class="statusbar">
+      <span class="pill ${d.optimal ? "ok" : "warn"}">${d.optimal
+        ? "Best possible timetable" : "Good timetable found"}</span>
+      <span style="color:var(--muted);font-size:13.5px">
+        took ${d.wall_time}s${d.optimal ? "" : " — trying for longer may improve it"}</span>
+      ${clean ? "" : `<span class="pill bad">${d.violations.length} problems</span>`}
+      <div class="spacer"></div>
+      <button class="btn" id="back">&larr; Change my inputs</button>
+      <button class="btn" id="again">Try again</button>
+    </div>
+    <div class="tabs">${Object.entries(TABS).map(([k,v]) =>
+      `<button class="tab ${k===tab?"on":""}" data-tab="${k}">${v}</button>`).join("")}</div>
+    <div class="view" id="rview"></div>
+  </div>`;
+  drawTab();
+  window.scrollTo({top:0, behavior:"smooth"});
+}
+
+function drawTab() {
+  document.querySelectorAll(".tab").forEach(t =>
+    t.classList.toggle("on", t.dataset.tab === tab));
+  $("rview").innerHTML = {classes:tabClasses, teachers:tabTeachers, rooms:tabRooms,
+    quality:tabQuality, download:tabDownload}[tab]();
+}
+
+function headRow(grid) {
+  return "<tr><th></th>" + grid.periods.map(p =>
+    `<th class="${grid.breaks.includes(p.id)?"brk":""}">P${p.id}
+      <span class="sub">${esc(p.start)}</span></th>`).join("") + "</tr>";
+}
+
+function tabClasses() {
+  const d = result, grid = d.instance.grid, at = {};
+  d.meetings.forEach(m => (at[`${m.group}|${m.day}|${m.period}`] ??= []).push(m));
+  return `<div class="legend">
+      <span><i class="sw" style="background:#fff"></i> theory</span>
+      <span><i class="sw" style="background:var(--lab)"></i> lab</span>
+      <span><i class="sw" style="background:var(--activity)"></i> activity</span>
+      <span><i class="sw" style="background:var(--free)"></i> free</span>
+    </div>` + d.instance.groups.map(g => {
+    const rows = grid.days.map(day => `<tr><td class="day">${esc(day)}</td>` +
+      grid.periods.map(p => {
+        const brk = grid.breaks.includes(p.id) ? " brk" : "";
+        const got = at[`${g.id}|${day}|${p.id}`];
+        if (!got) return `<td class="free${brk}">·</td>`;
+        return `<td class="${esc(got[0].kind)}${brk}" title="${esc(got[0].title)}">` +
+          got.sort((a,b)=>a.batch-b.batch).map(m =>
+            `<span class="code">${esc(m.course)}${m.batches>1?` B${m.batch}`:""}</span>
+             <span class="sub">${esc(m.room)}</span>
+             <span class="sub">${esc(m.staff.join(", "))}</span>`).join('<hr class="split">') + `</td>`;
+      }).join("") + "</tr>").join("");
+    return `<div class="gtitle">${esc(g.name)}
+      <small>— ${g.demand} periods taught, ${grid.n_slots - g.demand} free</small></div>
+      <table class="tt">${headRow(grid)}${rows}</table>`;
+  }).join("");
+}
+
+function tabTeachers() {
+  const d = result, grid = d.instance.grid;
+  const teaching = d.instance.staff.filter(s => d.meetings.some(m => m.staff.includes(s.name)));
+  if (!teaching.length) return `<div class="empty"><b>Nobody is teaching</b></div>`;
+  const id = teaching.some(s => s.id === staffPick) ? staffPick : teaching[0].id;
+  const who = teaching.find(s => s.id === id);
+  const mine = d.meetings.filter(m => m.staff.includes(who.name));
+  const at = {}; mine.forEach(m => at[`${m.day}|${m.period}`] = m);
+  const off = new Set(who.unavailable.map(([a,b]) => `${a}|${b}`));
+
+  const rows = grid.days.map(day => `<tr><td class="day">${esc(day)}</td>` +
+    grid.periods.map(p => {
+      const brk = grid.breaks.includes(p.id) ? " brk" : "";
+      const m = at[`${day}|${p.id}`];
+      if (m) return `<td class="${esc(m.kind)}${brk}"><span class="code">${esc(m.course)}</span>
+        <span class="sub">${esc(m.group)}</span><span class="sub">${esc(m.room)}</span></td>`;
+      if (off.has(`${day}|${p.id}`)) return `<td class="na${brk}">away</td>`;
+      return `<td class="free${brk}">·</td>`;
+    }).join("") + "</tr>").join("");
+
+  const days = new Set(mine.map(m => m.day)).size;
+  return `<div class="f" style="max-width:340px;margin-bottom:16px">
+      <label>Show the week for</label>
+      <select id="staffpick">${teaching.map(s =>
+        `<option value="${esc(s.id)}"${s.id===id?" selected":""}>${esc(s.name)}</option>`).join("")}</select>
+    </div>
+    <div class="gtitle">${esc(who.name)}
+      <small>— ${mine.length} periods a week, spread over ${days} day${days===1?"":"s"}</small></div>
+    <table class="tt">${headRow(grid)}${rows}</table>`;
+}
+
+function tabRooms() {
+  const d = result, grid = d.instance.grid, busy = {};
+  d.meetings.forEach(m => busy[`${m.room}|${m.day}|${m.period}`] = m);
+  const rows = d.instance.rooms.map(r => {
+    let used = 0;
+    const strips = grid.days.map(day => `<span class="d">` + grid.periods.map(p => {
+      const m = busy[`${r.id}|${day}|${p.id}`];
+      if (m) used++;
+      return `<i class="${m?"on":""}" title="${m
+        ? esc(`${day} P${p.id} — ${m.course}, ${m.group}`) : esc(`${day} P${p.id} — free`)}"></i>`;
+    }).join("") + `</span>`).join("");
+    return `<tr><td><b>${esc(r.id)}</b><span class="sub">${
+        r.kind==="lab"?"Lab":"Classroom"} · ${r.capacity} seats</span></td>
+      <td class="num">${Math.round(100*used/grid.n_slots)}%<span class="sub">${used} of ${grid.n_slots}</span></td>
+      <td><div class="occ">${strips}</div></td></tr>`;
+  }).join("");
+  return `<p style="color:var(--muted);font-size:13.5px;margin-bottom:14px">
+      Each small square is one period. Filled means booked — hover to see by whom.
+      Days run ${grid.days.join(", ")}.</p>
+    <table class="list"><tr><th>Room</th><th class="num">In use</th><th>The week</th></tr>${rows}</table>`;
+}
+
+function tabQuality() {
+  const d = result;
+  const nice = {
+    student_gap:"Free periods stuck in the middle of a class's day",
+    staff_gap:"Free periods stuck in the middle of a teacher's day",
+    staff_days:"Days a teacher has to come in",
+    late_period:"Theory classes in the last period",
+    adjacent_days:"Same subject on two days in a row",
+    load_imbalance:"Some days much longer than others",
+    room_churn:"A class moving between more rooms than needed",
+    two_labs_per_day:"Two labs squeezed into one day",
+    early_lab:"Labs late in the day",
+  };
+  const max = Math.max(1, ...d.penalties.map(p => p.cost));
+  const rows = d.penalties.map(p => `<tr>
+    <td>${esc(nice[p.key] || p.label)}</td>
+    <td class="num">${p.count}</td>
+    <td style="width:130px"><div class="bar" style="width:${p.cost?Math.max(4,100*p.cost/max):0}%;
+      ${p.cost?"":"opacity:.15"}"></div></td></tr>`).join("");
+  const head = d.violations.length
+    ? `<div class="note bad"><span class="ico">&#9888;</span><span>
+        <b>Something is wrong with this timetable.</b> The checker found things that
+        should be impossible — please report this.<ul>${
+        d.violations.map(v=>`<li>${esc(v)}</li>`).join("")}</ul></span></div>`
+    : `<div class="note ok"><span class="ico">&#10003;</span><span>
+        <b>Checked and clean.</b> No student, teacher or room is double-booked anywhere,
+        every subject got all its periods, and every lab sits in one unbroken block.</span></div>`;
+  return head + `<p style="color:var(--muted);font-size:13.5px;margin:14px 0">
+      Below are the <b>nice-to-haves</b> — none of these make a timetable invalid, they
+      just make it pleasanter. Smaller bars are better. ${d.optimal
+        ? "This is the best trade-off that exists for your data."
+        : "Running for longer may bring these down."}</p>
+    <table class="list"><tr><th>What we tried to avoid</th><th class="num">Times it happened</th>
+      <th></th></tr>${rows}</table>`;
+}
+
+function tabDownload() {
+  const d = result;
+  return `<p style="color:var(--muted);font-size:13.5px;margin-bottom:16px">
+      Check it over below, then save it. The <b>web page</b> keeps the colours and
+      prints nicely; the <b>spreadsheet</b> has one row per class so you can sort
+      and filter it.</p>
+    <div class="btnrow" style="margin-bottom:18px">
+      <button class="btn primary" onclick="location.assign('/api/result/${d.id}/timetable.html?download=1')">
+        Download web page</button>
+      <button class="btn" onclick="location.assign('/api/result/${d.id}/timetable.csv')">
+        Download spreadsheet (CSV)</button>
+    </div>
+    <iframe class="preview" src="/api/result/${d.id}/timetable.html" title="Preview"></iframe>`;
+}
+
+/* ================================================================ actions */
+
+function collectRoom() {
+  const name = $("r_name").value.trim();
+  if (!name) return alert("Please give the room a name.");
+  const taken = roomIds().filter((_,i) => !(editing && editing.index === i));
+  return {
+    id: slug(name, taken),
+    kind: $("r_kind").value,
+    capacity: +$("r_cap").value || 40,
+    facilities: $("r_fac").value.split(",").map(x=>x.trim()).filter(Boolean),
+  };
+}
+function collectStaff(prev) {
+  const name = $("s_name").value.trim();
+  if (!name) return alert("Please give the teacher a name.");
+  const off = [...document.querySelectorAll("#s_off .tg.warnon")].map(b => `${b.dataset.off}:*`);
+  const other = (prev?.unavailable || []).filter(u => !/:\*$/.test(u));
+  const taken = staffIds().filter((_,i) => !(editing && editing.index === i));
+  return {
+    id: prev ? prev.id : slug(name, taken),
+    name,
+    kind: $("s_kind").value,
+    unavailable: [...off, ...other],
+    max_periods_per_day: +$("s_max").value || 6,
+  };
+}
+function collectGroup(prev) {
+  const name = $("g_name").value.trim();
+  if (!name) return alert("Please give the class a name.");
+  const taken = groupIds().filter((_,i) => !(editing && editing.index === i));
+  const P = S.grid.periods.length;
+  const policy = $("g_policy").value;
+  // Two of the policies are just day-load bounds; write them out explicitly so
+  // the saved file says what it means rather than relying on the policy name.
+  let lo = 0, hi = P;
+  if (policy === "spread") { lo = +$("g_min").value || 0; hi = +$("g_max").value || P; }
+  else if (policy === "daily_break") hi = P - 1;
+  else if (policy === "packed") lo = P - 1;
+  return {
+    ...(prev || {}),
+    id: prev ? prev.id : slug(name, taken),
+    name,
+    strength: +$("g_str").value || 40,
+    free_policy: policy,
+    min_periods_per_day: lo,
+    max_periods_per_day: hi,
+  };
+}
+function collectCourse(prev) {
+  const code = $("c_code").value.trim();
+  if (!code) return alert("Please give the subject a code.");
+  const kind = $("c_kind").value;
+  const hours = +$("c_hours").value || 1;
+  if (kind === "lab" && hours % 2)
+    return alert(`A lab runs in blocks of two periods, so its total must be even. You entered ${hours}.`);
+  const picks = [...document.querySelectorAll("#c_staff select")].map(s => s.value);
+  const roomKind = kind === "lab" ? "lab" : "classroom";
+  const sections = kind === "lab"
+    ? picks.map(id => ({staff:[id], room_kind:roomKind}))
+    : [{staff:[picks[0]].filter(Boolean), room_kind:roomKind}];
+  return {
+    ...(prev || {}),
+    code, title: $("c_title").value.trim() || code,
+    group: $("c_group").value, kind, hours,
+    sections: sections.length ? sections : [{staff:[], room_kind:roomKind}],
+  };
+}
+
+async function runSolve(checkOnly) {
+  const effort = +(document.querySelector("#effort .tg.on")?.dataset.effort || 60);
+  working(checkOnly ? "Checking…" : "Working out your timetable…",
+    checkOnly ? "Looking for anything impossible." : `This can take up to ${effort} seconds.`);
+  try {
+    if (checkOnly) {
+      const d = await api("/api/inspect", {instance: S});
+      $("genmsg").innerHTML = d.problems.length
+        ? problemList("This cannot be scheduled as it stands — the numbers make it " +
+            "impossible, so one of these has to change first:", d.problems)
+        : `<div class="note ok"><span class="ico">&#10003;</span><span>
+            <b>Nothing obviously impossible.</b> Go ahead and generate.</span></div>`;
+      return;
+    }
+    const d = await api("/api/solve", {instance: S, time: effort, seed: Math.floor(Math.random()*1e6)});
+    if (!d.ok && d.stage === "preflight") {
+      $("genmsg").innerHTML = problemList("This cannot be scheduled — one of these " +
+        "has to change first:", d.problems);
+      return;
+    }
+    if (!d.ok) {
+      $("genmsg").innerHTML = `<div class="note bad"><span class="ico">&#9888;</span><span>
+        ${d.status === "INFEASIBLE"
+          ? "<b>No timetable exists for this data.</b> Something contradicts something else — the most common cause is a teacher with more hours than they have free slots."
+          : "<b>Ran out of time.</b> Try the Thorough setting, or reduce how tightly packed the week is."}</span></div>`;
+      return;
+    }
+    result = d; tab = "classes"; staffPick = null;
+    showResult();
+  } catch (e) {
+    $("genmsg").innerHTML = errorNote(e.message);
+  } finally { done(); }
+}
+
+/* ================================================================ wiring */
+
+document.body.addEventListener("click", async (ev) => {
+  const t = ev.target.closest("[data-step],[data-go],[data-day],[data-addper],[data-delper]," +
+    "[data-edit],[data-del],[data-save],[data-cancel],[data-off],[data-effort]," +
+    "[data-tpl],[data-imp],[data-open-sample],[data-open-saved],[data-del-saved]," +
+    "[data-tab],#back,#again,#btncheck,#btngen,#save,#download,#open,#reset");
+  if (!t) return;
+
+  /* navigation */
+  if (t.dataset.step !== undefined) { step = +t.dataset.step; editing = null; return render(); }
+  if (t.dataset.go   !== undefined) { step = +t.dataset.go;   editing = null; return render(); }
+  if (t.dataset.tab) { tab = t.dataset.tab; return drawTab(); }
+  if (t.id === "back")  { result = null; step = 5; return render(); }
+  if (t.id === "again") { result = null; step = 5; render(); return runSolve(false); }
+
+  /* week shape */
+  if (t.dataset.day) {
+    const d = t.dataset.day;
+    S.grid.days = DAYS_ALL.filter(x => x === d ? !S.grid.days.includes(d) : S.grid.days.includes(x));
+    if (!S.grid.days.length) S.grid.days = [d];
+    return render();
+  }
+  if (t.dataset.addper) {
+    const last = S.grid.periods[S.grid.periods.length-1];
+    S.grid.periods.push({id:(last?.id||0)+1, start:last?.end||"09:00", end:"09:50"});
+    reblock(); return render();
+  }
+  if (t.dataset.delper !== undefined) {
+    S.grid.periods.splice(+t.dataset.delper,1);
+    S.grid.periods.forEach((p,i) => p.id = i+1);
+    reblock(); return render();
+  }
+  if (t.dataset.off) { t.classList.toggle("warnon"); return; }
+  if (t.dataset.effort) {
+    document.querySelectorAll("#effort .tg").forEach(b => b.classList.remove("on"));
+    t.classList.add("on"); return;
+  }
+
+  /* rows */
+  if (t.dataset.edit) { editing = {section:t.dataset.edit, index:+t.dataset.i}; return render(); }
+  if (t.dataset.del) {
+    const sec = t.dataset.del, i = +t.dataset.i;
+    const item = S[sec][i];
+    if (sec === "groups") {
+      const n = S.courses.filter(c => c.group === item.id).length;
+      if (n && !confirm(`“${item.name}” has ${n} subject(s). Delete the class and its subjects?`)) return;
+      S.courses = S.courses.filter(c => c.group !== item.id);
+    }
+    if (sec === "staff") {
+      const n = S.courses.filter(c => (c.sections||[]).some(s => (s.staff||[]).includes(item.id))).length;
+      if (n && !confirm(`${item.name} teaches ${n} subject(s). Delete anyway? Those subjects will have no teacher.`)) return;
+      S.courses.forEach(c => c.sections.forEach(s => s.staff = (s.staff||[]).filter(x => x !== item.id)));
+    }
+    S[sec].splice(i,1); editing = null; return render();
+  }
+  if (t.dataset.cancel) { editing = null; return render(); }
+  if (t.dataset.save) {
+    const sec = t.dataset.save;
+    const prev = editing?.section === sec ? S[sec][editing.index] : null;
+    const rec = {rooms:collectRoom, staff:()=>collectStaff(prev),
+                 groups:()=>collectGroup(prev), courses:()=>collectCourse(prev)}[sec]();
+    if (!rec) return;
+    if (prev) S[sec][editing.index] = rec; else S[sec].push(rec);
+    editing = null; return render();
+  }
+
+  /* import / export */
+  if (t.dataset.tpl) {
+    const k = t.dataset.tpl;
+    return download(IMPORTS[k].file, templateCSV(k), "text/csv");
+  }
+  if (t.dataset.imp) return pickFile("csv", t.dataset.imp);
+  if (t.id === "open")     return pickFile("yaml");
+  if (t.id === "download") return downloadSetup();
+  if (t.id === "save")     return saveToSite();
+  if (t.id === "reset") {
+    if (!confirm("Clear everything and start again?")) return;
+    S = blankSetup(); step = 0; result = null; editing = null; return render();
+  }
+
+  /* generate */
+  if (t.id === "btncheck") return runSolve(true);
+  if (t.id === "btngen")   return runSolve(false);
+
+  /* the setup library */
+  if (t.dataset.openSample) return openStored("samples", t.dataset.openSample);
+  if (t.dataset.openSaved)  return openStored("saved", t.dataset.openSaved);
+  if (t.dataset.delSaved) {
+    if (!confirm(`Delete “${t.dataset.title}” from this site? This cannot be undone.`)) return;
+    try {
+      const r = await fetch(`/api/saved/${encodeURIComponent(t.dataset.delSaved)}`,
+                            {method: "DELETE"});
+      if (!r.ok) throw new Error((await r.json()).detail);
+      toast("Deleted.");
+      loadSaved();
+    } catch (e) { toast("Could not delete: " + e.message, true); }
+  }
+});
+
+document.body.addEventListener("input", (ev) => {
+  const t = ev.target;
+  if (t.dataset.set === "name") S.name = t.value;
+  if (t.dataset.per !== undefined) S.grid.periods[+t.dataset.per][t.dataset.k] = t.value;
+  if (t.id === "g_policy") {
+    const gid = editing?.section === "groups" ? S.groups[editing.index].id : null;
+    $("g_bounds").hidden = t.value !== "spread";
+    $("g_policy_note").innerHTML = policyNote(t.value, gid);
+  }
+  if (t.id === "c_kind" || t.id === "c_batches") {
+    // batches only make sense for a lab; re-render the teacher pickers
+    const kind = $("c_kind").value;
+    const n = kind === "lab" ? Math.max(1, +$("c_batches").value || 1) : 1;
+    const cur = [...document.querySelectorAll("#c_staff select")].map(s => s.value);
+    $("c_staff").innerHTML = Array.from({length:n}, (_,j) => `<div class="f">
+      ${n>1?`<label style="font-weight:500;color:var(--muted)">Batch ${j+1}</label>`:""}
+      <select data-sec="${j}">${S.staff.map(s =>
+        `<option value="${esc(s.id)}"${cur[j]===s.id?" selected":""}>${esc(s.name)}</option>`).join("")}</select>
+    </div>`).join("");
+    $("c_hint").textContent = kind === "lab"
+      ? "A lab runs in 2-period blocks, so its total must be even."
+      : "Usually one period per session.";
+  }
+});
+
+document.body.addEventListener("change", (ev) => {
+  if (ev.target.id === "staffpick") { staffPick = ev.target.value; drawTab(); }
+});
+
+/* period pairs a lab may occupy: consecutive pairs, recomputed on any change */
+function reblock() {
+  const ids = S.grid.periods.map(p => p.id);
+  S.grid.blocks = [];
+  for (let i = 0; i + 1 < ids.length; i += 2) S.grid.blocks.push([ids[i], ids[i+1]]);
+  // shortening the day can leave a class allowed more periods than exist
+  S.groups.forEach(g => {
+    g.max_periods_per_day = Math.min(g.max_periods_per_day ?? ids.length, ids.length);
+    g.min_periods_per_day = Math.min(g.min_periods_per_day ?? 0, ids.length);
+  });
+}
+
+/* Fill in anything a hand-written file left out, so the form never sees holes. */
+function normalise(raw) {
+  const s = {...blankSetup(), ...raw};
+  s.grid = {...blankSetup().grid, ...(raw.grid || {})};
+  s.rooms = (raw.rooms || []).map(r => ({facilities:[], capacity:60, kind:"classroom", ...r}));
+  s.staff = (raw.staff || []).map(x => ({kind:"internal", unavailable:[],
+    max_periods_per_day:6, name:x.id, ...x}));
+  s.groups = (raw.groups || []).map(g => ({strength:40, min_periods_per_day:0,
+    max_periods_per_day:s.grid.periods.length, name:g.id, free_policy:"spread", ...g}));
+  s.courses = (raw.courses || []).map(c => ({kind:"theory", title:c.code,
+    ...c, sections: (c.sections || [{}]).map(x => ({staff:[], ...x}))}));
+  return s;
+}
+
+let pickMode = null, pickSection = null;
+function pickFile(mode, section) {
+  pickMode = mode; pickSection = section;
+  $("filepick").accept = mode === "csv" ? ".csv,text/csv" : ".yaml,.yml";
+  $("filepick").click();
+}
+
+$("filepick").onchange = async (ev) => {
+  const f = ev.target.files[0];
+  ev.target.value = "";
+  if (!f) return;
+  const text = await f.text();
+  if (pickMode === "csv") {
+    const {added, problems} = importRows(pickSection, parseCSV(text));
+    render();
+    const box = document.querySelector(".import");
+    if (box) box.insertAdjacentHTML("afterend",
+      `<div class="note ${problems.length ? "warn" : "ok"}"><span class="ico">${
+        problems.length ? "&#9888;" : "&#10003;"}</span><span>
+        <b>Added ${added} row${added===1?"":"s"} from ${esc(f.name)}.</b>
+        ${problems.length ? `<ul>${problems.map(p=>`<li>${esc(p)}</li>`).join("")}</ul>` : ""}
+      </span></div>`);
+    return;
+  }
+  working("Opening your file…");
+  try {
+    const d = await api("/api/parse", {yaml: text});
+    S = normalise(d.instance); step = 1; result = null; render();
+  } catch (e) { alert("That file could not be read:\n\n" + e.message); }
+  finally { done(); }
+};
+
+async function downloadSetup() {
+  try {
+    const r = await fetch("/api/instance.yaml", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({instance: S}),
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(()=>({detail:"unknown error"}));
+      return alert("Cannot save yet — the setup is incomplete:\n\n" + e.detail);
+    }
+    download("timetable-setup.yaml", await r.text(), "application/x-yaml");
+  } catch (e) { alert("Could not save: " + e.message); }
+}
+
+function toast(msg, bad) {
+  const el = $("toast");
+  el.textContent = msg;
+  el.className = bad ? "bad" : "";
+  el.hidden = false;
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { el.hidden = true; }, 3200);
+}
+
+/* Pull a stored instance -- bundled example or saved setup -- into the form. */
+async function openStored(kind, id) {
+  working("Opening…");
+  try {
+    const r = await fetch(`/api/${kind}/${encodeURIComponent(id)}`);
+    if (!r.ok) throw new Error("it is no longer there");
+    const d = await api("/api/parse", {yaml: await r.text()});
+    S = normalise(d.instance); result = null; editing = null; step = 1; render();
+  } catch (e) { toast("Could not open that: " + e.message, true); }
+  finally { done(); }
+}
+
+async function loadSaved() {
+  const el = $("saved");
+  if (!el) return;
+  try {
+    const {saved} = await (await fetch("/api/saved")).json();
+    el.innerHTML = saved.length ? saved.map(x => `<div class="libitem">
+        <div class="who"><b>${esc(x.name)}</b>
+          <span class="meta">${x.groups} class${x.groups===1?"":"es"} ·
+            ${x.courses} subjects · ${x.staff} teachers · ${x.rooms} rooms</span></div>
+        <button class="btn tiny" data-open-saved="${esc(x.id)}">Open</button>
+        <button class="btn tiny danger" data-del-saved="${esc(x.id)}"
+          data-title="${esc(x.name)}">Delete</button>
+      </div>`).join("")
+      : `<div class="empty" style="padding:22px"><b>Nothing saved yet</b>
+          Build a timetable and press <b>Save to this site</b> — it will be listed here.</div>`;
+  } catch { el.innerHTML = `<span style="color:var(--muted)">could not reach the server</span>`; }
+}
+
+async function saveToSite() {
+  if (!S.groups.length && !S.rooms.length)
+    return toast("There is nothing to save yet.", true);
+  try {
+    const d = await api("/api/saved", {instance: S, title: S.name});
+    toast(d.replaced ? `Updated “${d.name}” on this site.`
+                     : `Saved “${d.name}” to this site.`);
+    loadSaved();
+  } catch (e) { toast("Cannot save: " + e.message, true); }
+}
+
+async function loadSamples() {
+  try {
+    const {samples} = await (await fetch("/api/samples")).json();
+    const el = $("samples");
+    if (!el) return;
+    el.innerHTML = samples.map(s =>
+      `<button class="btn" data-open-sample="${esc(s.id)}">${esc(s.name)}
+        <span style="color:var(--muted);font-weight:400">
+        · ${s.groups} class${s.groups===1?"":"es"}, ${s.courses} subjects</span></button>`).join("");
+  } catch { /* the page still works without examples */ }
+}
+
+render();
+loadSamples();
+</script>
+</body>
+</html>

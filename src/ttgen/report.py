@@ -19,6 +19,21 @@ from .model import Meeting, Solution
 
 FREE = "·"
 
+# Human-readable names for the soft constraints, shared by the terminal
+# summary and the web UI so the two never drift apart.
+SOFT_LABELS: dict[str, str] = {
+    "student_gap": "S1  class idle periods mid-day",
+    "staff_gap": "S6  staff idle periods mid-day",
+    "staff_days": "S8  staff days on campus",
+    "late_period": "S5  theory in the last periods",
+    "adjacent_days": "S2  same subject on back-to-back days",
+    "load_imbalance": "S11 uneven day lengths",
+    "room_churn": "S10 rooms per section (min 1 each)",
+    "two_labs_per_day": "S13 second lab in the same day",
+    "free_bunching": "S14 part-full days (some class, some free)",
+    "early_lab": "S4  labs late in the day",
+}
+
 
 def _index(sol: Solution):
     by: dict[tuple[str, str, int], list[Meeting]] = defaultdict(list)
@@ -138,23 +153,12 @@ def summary_table(inst: Instance, sol: Solution) -> Table:
     t.add_column("Violations", justify="right")
     t.add_column("Weight", justify="right")
     t.add_column("Cost", justify="right")
-    labels = {
-        "student_gap": "S1  class idle periods mid-day",
-        "staff_gap": "S6  staff idle periods mid-day",
-        "staff_days": "S8  staff days on campus",
-        "late_period": "S5  theory in the last periods",
-        "adjacent_days": "S2  same subject on back-to-back days",
-        "load_imbalance": "S11 uneven day lengths",
-        "room_churn": "S10 rooms per section (min 1 each)",
-        "two_labs_per_day": "S13 second lab in the same day",
-        "early_lab": "S4  labs late in the day",
-    }
     total = 0
     for key, count in sorted(sol.penalties.items(), key=lambda kv: -kv[1]):
         w = getattr(inst.weights, key, 0)
         cost = w * count
         total += cost
-        t.add_row(labels.get(key, key), str(count), str(w), str(cost))
+        t.add_row(SOFT_LABELS.get(key, key), str(count), str(w), str(cost))
     t.add_section()
     gap = "" if sol.best_bound is None else f"  [dim](lower bound {sol.best_bound})[/dim]"
     t.add_row("[bold]total[/bold]", "", "", f"[bold]{total}[/bold]{gap}")

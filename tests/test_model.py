@@ -339,3 +339,92 @@ def test_unavailability_that_leaves_too_few_days_is_caught_early():
     inst = from_dict(raw)
     problems = check(inst)
     assert any("distinct day" in p for p in problems), problems
+
+
+# --- where the free periods land ------------------------------------------- #
+
+def _four_singles():
+    """Four one-period subjects: enough distinct courses to fill a whole day.
+
+    Theory defaults to one period per day, so a day can only be filled by as
+    many separate subjects as there are periods in it.
+    """
+    return [
+        {"code": f"T{i}", "group": "G1", "kind": "theory", "hours": 1,
+         "sections": [{"staff": ["A" if i % 2 else "B"]}]}
+        for i in range(4)
+    ]
+
+
+def test_daily_break_keeps_one_period_free_every_day():
+    raw = copy.deepcopy(BASE)
+    raw["groups"][0]["free_policy"] = "daily_break"
+    raw["courses"] = _four_singles()
+    inst = from_dict(raw)
+    # the policy shows up as a day-load cap, so preflight can reason about it
+    assert inst.groups["G1"].max_periods_per_day == 3
+    sol = solve(inst)
+    assert sol.ok
+    assert not verify(inst, sol)
+    for d in inst.grid.days:
+        taught = {m.period for m in sol.meetings if m.day == d}
+        assert len(taught) <= 3, f"{d} has no free period"
+
+
+def test_packed_allows_at_most_one_free_period_a_day():
+    raw = copy.deepcopy(BASE)
+    raw["groups"][0]["free_policy"] = "packed"
+    raw["courses"] = [
+        {"code": f"T{i}", "group": "G1", "kind": "theory", "hours": 2,
+         "sections": [{"staff": ["A" if i % 2 else "B"]}]}
+        for i in range(3)
+    ]
+    inst = from_dict(raw)
+    assert inst.groups["G1"].min_periods_per_day == 3
+    sol = solve(inst)
+    assert sol.ok
+    assert not verify(inst, sol)
+    for d in inst.grid.days:
+        taught = {m.period for m in sol.meetings if m.day == d}
+        assert len(taught) >= 3, f"{d} has more than one free period"
+
+
+def test_packed_without_enough_hours_is_caught_before_solving():
+    raw = copy.deepcopy(BASE)
+    raw["groups"][0]["free_policy"] = "packed"      # BASE has only 2 hours
+    problems = check(from_dict(raw))
+    assert any("min_periods_per_day" in p for p in problems)
+
+
+def test_bunched_prefers_a_whole_free_day_over_two_half_days():
+    raw = copy.deepcopy(BASE)
+    raw["courses"] = _four_singles()
+
+    spread = solve(from_dict({**raw, "groups": [{**raw["groups"][0]}]}))
+    by_day = lambda s: sorted(
+        len({m.period for m in s.meetings if m.day == d}) for d in ["MON", "TUE"]
+    )
+    # balancing the load is the default, so the four periods split evenly
+    assert by_day(spread) == [2, 2]
+
+    raw["groups"][0]["free_policy"] = "bunched"
+    inst = from_dict(raw)
+    assert inst.groups["G1"].min_periods_per_day == 0   # an empty day must be legal
+    sol = solve(inst)
+    assert sol.ok
+    assert not verify(inst, sol)
+    assert by_day(sol) == [0, 4], "free periods should collapse onto one day"
+
+
+def test_unknown_free_policy_is_rejected():
+    raw = copy.deepcopy(BASE)
+    raw["groups"][0]["free_policy"] = "whenever"
+    with pytest.raises(InstanceError, match="free_policy"):
+        from_dict(raw)
+
+
+def test_policy_that_contradicts_an_explicit_cap_is_reported():
+    raw = copy.deepcopy(BASE)
+    raw["groups"][0].update({"free_policy": "packed", "max_periods_per_day": 2})
+    with pytest.raises(InstanceError, match="capped at"):
+        from_dict(raw)

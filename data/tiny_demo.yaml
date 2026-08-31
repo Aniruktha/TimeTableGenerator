@@ -1,0 +1,75 @@
+# A deliberately small instance -- one class, four courses, solves in well
+# under a second.  Use this to see the tool working end to end before
+# reaching for the real AMCS data, which takes tens of seconds.
+
+name: Demo -- one M.Sc. class
+
+grid:
+  days: [MON, TUE, WED, THU, FRI]
+  periods:
+    - {id: 1, start: "08:30", end: "09:20"}
+    - {id: 2, start: "09:20", end: "10:10"}
+    - {id: 3, start: "10:30", end: "11:20"}
+    - {id: 4, start: "11:20", end: "12:10"}
+    - {id: 5, start: "13:40", end: "14:30"}
+    - {id: 6, start: "14:30", end: "15:20"}
+    - {id: 7, start: "15:30", end: "16:20"}
+    - {id: 8, start: "16:20", end: "17:10"}
+  blocks: [[1, 2], [3, 4], [5, 6], [7, 8]]
+
+blocked_slots: []
+
+rooms:
+  - {id: R101, kind: classroom, capacity: 60, building: R}
+  - {id: R102, kind: classroom, capacity: 60, building: R}
+  - {id: L201, kind: lab, capacity: 30, building: L, facilities: [python]}
+  - {id: L202, kind: lab, capacity: 30, building: L, facilities: [python]}
+
+staff:
+  - {id: ANAND_R,  name: ANAND R}
+  - {id: BHAVNA_S, name: BHAVNA S}
+  - {id: CHITRA_M, name: CHITRA M}
+  # A visiting lecturer who is only on campus Tuesday and Thursday -- this is
+  # the constraint that makes the instance interesting rather than trivial.
+  - id: DEEPAK_N
+    name: DEEPAK N
+    kind: visiting
+    prefer_few_days: true
+    unavailable: ["MON:*", "WED:*"]
+
+groups:
+  - {id: MSC-DEMO, name: "M.Sc. Demo -- Semester 1", strength: 40,
+     min_periods_per_day: 2, max_periods_per_day: 6}
+
+courses:
+  - code: DM101
+    title: Discrete Mathematics
+    group: MSC-DEMO
+    kind: theory
+    hours: 4
+    sections: [{staff: [ANAND_R]}]
+
+  - code: DS102
+    title: Data Structures
+    group: MSC-DEMO
+    kind: theory
+    hours: 3
+    sections: [{staff: [BHAVNA_S]}]
+
+  - code: OS103
+    title: Operating Systems
+    group: MSC-DEMO
+    kind: theory
+    hours: 3
+    sections: [{staff: [DEEPAK_N]}]
+
+  # Splits into two batches: both run in the same block, in different labs,
+  # each with its own staff member.
+  - code: DSL104
+    title: Data Structures Lab
+    group: MSC-DEMO
+    kind: lab
+    hours: 4
+    sections:
+      - {staff: [BHAVNA_S], room_kind: lab, needs: [python]}
+      - {staff: [CHITRA_M], room_kind: lab, needs: [python]}

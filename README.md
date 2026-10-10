@@ -1,4 +1,4 @@
-# AMCS Timetable Generator GUNDU
+# AMCS Timetable Generator
 
 A CP-SAT timetable generator for the AMCS department at PSG College of
 Technology, Coimbatore. This is **stage 1 of 4** — a deliberately small,

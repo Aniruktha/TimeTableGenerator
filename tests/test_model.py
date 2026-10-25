@@ -12,7 +12,7 @@ import copy
 import pytest
 
 from ttgen.data import InstanceError, from_dict
-from ttgen.model import TimetableModel
+from ttgen.model import Meeting, Solution, TimetableModel
 from ttgen.preflight import check
 from ttgen.verify import verify
 
@@ -280,44 +280,11 @@ def test_basket_members_must_agree_on_hours():
         from_dict(raw)
 
 
-# --- H13: daily load bounds ------------------------------------------------ #
-
-def test_daily_load_bounds_are_enforced():
-    raw = copy.deepcopy(BASE)
-    raw["groups"][0].update({"min_periods_per_day": 2, "max_periods_per_day": 2})
-    raw["courses"] = [
-        {"code": f"T{i}", "group": "G1", "kind": "theory", "hours": 2,
-         "sections": [{"staff": ["A" if i % 2 else "B"]}]}
-        for i in range(2)
-    ]
-    inst = from_dict(raw)
-    sol = solve(inst)
-    assert sol.ok
-    per_day = {}
-    for m in sol.meetings:
-        per_day.setdefault(m.day, set()).add(m.period)
-    assert all(len(v) == 2 for v in per_day.values())
-
-
-def test_impossible_daily_cap_is_reported_not_solved():
-    raw = copy.deepcopy(BASE)
-    raw["groups"][0]["max_periods_per_day"] = 1
-    raw["courses"] = [
-        {"code": f"T{i}", "group": "G1", "kind": "theory", "hours": 2,
-         "sections": [{"staff": ["A" if i % 2 else "B"]}]}
-        for i in range(2)
-    ]
-    inst = from_dict(raw)
-    problems = check(inst)
-    assert any("max_periods_per_day" in p for p in problems)
-
-
 # --- soft constraints ------------------------------------------------------ #
 
 def test_solver_prefers_a_gapless_day():
     raw = copy.deepcopy(BASE)
     raw["grid"]["days"] = ["MON"]
-    raw["groups"][0]["max_periods_per_day"] = 4
     raw["courses"] = [
         {"code": "T1", "group": "G1", "kind": "theory", "hours": 1,
          "sections": [{"staff": ["A"]}]},
@@ -341,90 +308,273 @@ def test_unavailability_that_leaves_too_few_days_is_caught_early():
     assert any("distinct day" in p for p in problems), problems
 
 
-# --- where the free periods land ------------------------------------------- #
+# --- free periods are weekly, never daily ---------------------------------- #
 
-def _four_singles():
-    """Four one-period subjects: enough distinct courses to fill a whole day.
-
-    Theory defaults to one period per day, so a day can only be filled by as
-    many separate subjects as there are periods in it.
-    """
+def _singles(n):
+    """n one-period subjects, alternating between the two staff."""
     return [
         {"code": f"T{i}", "group": "G1", "kind": "theory", "hours": 1,
          "sections": [{"staff": ["A" if i % 2 else "B"]}]}
-        for i in range(4)
+        for i in range(n)
     ]
 
 
-def test_daily_break_keeps_one_period_free_every_day():
+def test_free_periods_are_the_week_minus_teaching():
     raw = copy.deepcopy(BASE)
-    raw["groups"][0]["free_policy"] = "daily_break"
-    raw["courses"] = _four_singles()
+    raw["courses"] = _singles(5)
     inst = from_dict(raw)
-    # the policy shows up as a day-load cap, so preflight can reason about it
-    assert inst.groups["G1"].max_periods_per_day == 3
+    assert inst.demand("G1") == 5
+    assert inst.free_periods("G1") == 8 - 5
     sol = solve(inst)
     assert sol.ok
-    assert not verify(inst, sol)
-    for d in inst.grid.days:
-        taught = {m.period for m in sol.meetings if m.day == d}
-        assert len(taught) <= 3, f"{d} has no free period"
+    taught = {(m.day, m.period) for m in sol.meetings}
+    assert len(taught) == 5
+    assert 8 - len(taught) == inst.free_periods("G1")
 
 
-def test_packed_allows_at_most_one_free_period_a_day():
+def test_blocked_slots_are_not_counted_as_free():
     raw = copy.deepcopy(BASE)
-    raw["groups"][0]["free_policy"] = "packed"
-    raw["courses"] = [
-        {"code": f"T{i}", "group": "G1", "kind": "theory", "hours": 2,
-         "sections": [{"staff": ["A" if i % 2 else "B"]}]}
-        for i in range(3)
-    ]
+    raw["blocked_slots"] = ["TUE:4"]
     inst = from_dict(raw)
-    assert inst.groups["G1"].min_periods_per_day == 3
+    assert inst.free_periods("G1") == 8 - 1 - 2
+
+
+def test_no_per_day_rule_a_full_day_and_an_empty_day_are_both_legal():
+    # Four singles all pinned to MON: MON is full and TUE has every free
+    # period.  Under the old per-day rules this was refused; now it is legal.
+    raw = copy.deepcopy(BASE)
+    raw["courses"] = _singles(4)
+    for i, c in enumerate(raw["courses"]):
+        c["pin"] = [f"MON:{i + 1}"]
+    inst = from_dict(raw)
+    assert check(inst) == []
     sol = solve(inst)
     assert sol.ok
-    assert not verify(inst, sol)
-    for d in inst.grid.days:
-        taught = {m.period for m in sol.meetings if m.day == d}
-        assert len(taught) >= 3, f"{d} has more than one free period"
+    assert {m.day for m in sol.meetings} == {"MON"}
 
 
-def test_packed_without_enough_hours_is_caught_before_solving():
+def test_free_periods_fall_at_the_ends_of_days_not_in_the_middle():
     raw = copy.deepcopy(BASE)
-    raw["groups"][0]["free_policy"] = "packed"      # BASE has only 2 hours
+    raw["courses"] = _singles(4)
+    inst = from_dict(raw)
+    sol = solve(inst)
+    assert sol.ok
+    assert sol.penalties["student_gap"] == 0
+
+
+@pytest.mark.parametrize("key, value", [
+    ("min_periods_per_day", 2),
+    ("max_periods_per_day", 3),
+    ("free_policy", "packed"),
+])
+def test_per_day_class_settings_are_refused_not_ignored(key, value):
+    raw = copy.deepcopy(BASE)
+    raw["groups"][0][key] = value
+    with pytest.raises(InstanceError, match="per week"):
+        from_dict(raw)
+
+
+@pytest.mark.parametrize("weight", ["load_imbalance", "free_bunching"])
+def test_removed_per_day_weights_are_refused(weight):
+    raw = copy.deepcopy(BASE)
+    raw["weights"] = {weight: 4}
+    with pytest.raises(ValueError, match="unknown weight"):
+        from_dict(raw)
+
+
+def test_too_much_teaching_for_the_week_is_caught_before_solving():
+    raw = copy.deepcopy(BASE)
+    raw["courses"] = _singles(9)          # 9 hours, 8 slots
     problems = check(from_dict(raw))
-    assert any("min_periods_per_day" in p for p in problems)
+    assert any("only 8 slots" in p for p in problems), problems
 
 
-def test_bunched_prefers_a_whole_free_day_over_two_half_days():
+# --- H4 per batch: one person cannot take two parallel batches ------------- #
+
+def _lab_two_batches(staff1, staff2):
     raw = copy.deepcopy(BASE)
-    raw["courses"] = _four_singles()
+    raw["courses"] = [
+        {"code": "LAB", "group": "G1", "kind": "lab", "hours": 2,
+         "sections": [{"staff": [staff1], "needs": ["python"]},
+                      {"staff": [staff2], "needs": ["python"]}]},
+    ]
+    return from_dict(raw)
 
-    spread = solve(from_dict({**raw, "groups": [{**raw["groups"][0]}]}))
-    by_day = lambda s: sorted(
-        len({m.period for m in s.meetings if m.day == d}) for d in ["MON", "TUE"]
-    )
-    # balancing the load is the default, so the four periods split evenly
-    assert by_day(spread) == [2, 2]
 
-    raw["groups"][0]["free_policy"] = "bunched"
+def test_same_staff_on_two_batches_is_caught_before_solving():
+    problems = check(_lab_two_batches("A", "A"))
+    assert any("batch 1 and batch 2" in p for p in problems), problems
+
+
+def test_same_staff_on_two_batches_is_infeasible_in_the_model():
+    sol = TimetableModel(_lab_two_batches("A", "A")).solve(time_limit=5, workers=4)
+    assert sol.status == "INFEASIBLE"
+
+
+def test_different_staff_on_two_batches_is_fine():
+    sol = solve(_lab_two_batches("A", "B"))
+    assert sol.ok
+
+
+def test_verifier_catches_one_person_in_two_batches():
+    inst = _lab_two_batches("A", "A")
+    # Hand-build the illegal timetable the old model used to accept.
+    meetings = [
+        Meeting("G1", "LAB", "LAB", "lab", "MON", p, s, ("A",), room)
+        for s, room in [(0, "L1"), (1, "L2")]
+        for p in (1, 2)
+    ]
+    problems = verify(inst, Solution(status="FEASIBLE", meetings=meetings))
+    assert any(p.startswith("H4") and "double-booked" in p for p in problems), problems
+
+
+def test_same_staff_on_two_members_of_an_elective_basket_is_caught():
+    raw = copy.deepcopy(BASE)
+    raw["courses"] = [
+        {"code": "E1", "group": "G1", "kind": "theory", "hours": 2, "basket": "X",
+         "sections": [{"staff": ["A"]}]},
+        {"code": "E2", "group": "G1", "kind": "theory", "hours": 2, "basket": "X",
+         "sections": [{"staff": ["A"]}]},
+    ]
+    problems = check(from_dict(raw))
+    assert any("basket" in p and "Alpha" in p for p in problems), problems
+
+
+# --- H6 seats: an elective seats only its own students --------------------- #
+
+def test_elective_with_students_fits_a_smaller_room():
+    raw = copy.deepcopy(BASE)
+    raw["rooms"] = [{"id": "C1", "kind": "classroom", "capacity": 60},
+                    {"id": "S1", "kind": "classroom", "capacity": 20}]
+    raw["courses"] = [
+        {"code": "E1", "group": "G1", "kind": "theory", "hours": 2, "basket": "X",
+         "students": 20, "sections": [{"staff": ["A"]}]},
+        {"code": "E2", "group": "G1", "kind": "theory", "hours": 2, "basket": "X",
+         "students": 20, "sections": [{"staff": ["B"]}]},
+    ]
     inst = from_dict(raw)
-    assert inst.groups["G1"].min_periods_per_day == 0   # an empty day must be legal
+    assert inst.seats_for(inst.courses[0], inst.courses[0].sections[0]) == 20
     sol = solve(inst)
     assert sol.ok
-    assert not verify(inst, sol)
-    assert by_day(sol) == [0, 4], "free periods should collapse onto one day"
+    assert {m.room for m in sol.meetings} == {"C1", "S1"}
 
 
-def test_unknown_free_policy_is_rejected():
+def test_elective_without_students_still_seats_the_whole_class():
     raw = copy.deepcopy(BASE)
-    raw["groups"][0]["free_policy"] = "whenever"
-    with pytest.raises(InstanceError, match="free_policy"):
+    raw["rooms"] = [{"id": "S1", "kind": "classroom", "capacity": 20}]
+    with pytest.raises(InstanceError, match="no room"):
         from_dict(raw)
 
 
-def test_policy_that_contradicts_an_explicit_cap_is_reported():
+def test_lab_batches_split_the_elective_enrolment():
     raw = copy.deepcopy(BASE)
-    raw["groups"][0].update({"free_policy": "packed", "max_periods_per_day": 2})
-    with pytest.raises(InstanceError, match="capped at"):
-        from_dict(raw)
+    raw["courses"] = [
+        {"code": "LAB", "group": "G1", "kind": "lab", "hours": 2, "students": 30,
+         "sections": [{"staff": ["A"]}, {"staff": ["B"]}]},
+    ]
+    inst = from_dict(raw)
+    assert inst.seats_for(inst.courses[0], inst.courses[0].sections[1]) == 15
+
+
+# --- H10: per-day cap default and consecutive meetings --------------------- #
+
+@pytest.mark.parametrize("hours, days, expected", [(2, 2, 1), (3, 2, 2), (5, 5, 1), (6, 5, 2)])
+def test_max_per_day_defaults_to_what_the_week_needs(hours, days, expected):
+    raw = copy.deepcopy(BASE)
+    raw["grid"]["days"] = ["MON", "TUE", "WED", "THU", "FRI"][:days]
+    raw["courses"][0]["hours"] = hours
+    assert from_dict(raw).courses[0].max_per_day == expected
+
+
+def test_six_hour_subject_in_a_five_day_week_is_schedulable():
+    raw = copy.deepcopy(BASE)
+    raw["grid"]["days"] = ["MON", "TUE", "WED", "THU", "FRI"]
+    raw["courses"][0]["hours"] = 6
+    inst = from_dict(raw)
+    assert check(inst) == []
+    assert solve(inst).ok
+
+
+def test_explicit_max_per_day_still_wins():
+    raw = copy.deepcopy(BASE)
+    raw["courses"][0].update({"hours": 3, "max_per_day": 1})   # 3h, 2 days
+    problems = check(from_dict(raw))
+    assert any("distinct day" in p for p in problems), problems
+
+
+def test_consecutive_meetings_are_adjacent():
+    raw = copy.deepcopy(BASE)
+    raw["grid"]["days"] = ["MON"]
+    raw["staff"].append({"id": "C", "name": "Gamma"})
+    raw["courses"] = [
+        {"code": "T1", "group": "G1", "kind": "theory", "hours": 2, "max_per_day": 2,
+         "consecutive": True, "sections": [{"staff": ["A"]}]},
+        # P2 is taken, so the only adjacent pair left for T1 is P3+P4.
+        {"code": "P", "group": "G1", "kind": "activity", "hours": 1, "pin": ["MON:2"],
+         "sections": [{"staff": ["B"]}]},
+    ]
+    # Make the split P1+P3 the cheaper choice (less late-period cost, no gap
+    # penalties), so only the consecutive rule can push T1 into P3+P4.
+    raw["weights"] = {"student_gap": 0, "staff_gap": 0, "late_period": 10}
+    t1 = lambda sol: sorted(m.period for m in sol.meetings if m.course == "T1")
+
+    split = copy.deepcopy(raw)
+    split["courses"][0]["consecutive"] = False
+    assert t1(solve(from_dict(split))) == [1, 3]
+
+    sol = solve(from_dict(raw))
+    assert sol.ok
+    assert t1(sol) == [3, 4]
+
+
+def test_verifier_catches_split_consecutive_meetings():
+    raw = copy.deepcopy(BASE)
+    raw["grid"]["days"] = ["MON"]
+    raw["courses"][0].update({"max_per_day": 2, "consecutive": True})
+    inst = from_dict(raw)
+    meetings = [Meeting("G1", "T1", "T1", "theory", "MON", p, 0, ("A",), "C1")
+                for p in (1, 4)]
+    problems = verify(inst, Solution(status="FEASIBLE", meetings=meetings))
+    assert any("not consecutive" in p for p in problems), problems
+
+
+# --- soft-constraint bookkeeping ------------------------------------------- #
+
+def test_penalty_counts_are_exact_even_with_zero_weights():
+    raw = copy.deepcopy(BASE)
+    raw["courses"] = _singles(4)
+    raw["weights"] = {k: 0 for k in ["student_gap", "staff_gap", "staff_days",
+                                     "late_period", "adjacent_days", "room_churn",
+                                     "two_labs_per_day", "early_lab"]}
+    inst = from_dict(raw)
+    sol = solve(inst)
+    assert sol.ok
+    # Recount student gaps straight from the meetings.
+    gaps = 0
+    for d in inst.grid.days:
+        taught = sorted({m.period for m in sol.meetings if m.day == d})
+        if taught:
+            gaps += sum(1 for p in inst.grid.periods
+                        if taught[0] < p < taught[-1] and p not in taught)
+    assert sol.penalties["student_gap"] == gaps
+    rooms_used = len({(m.course, m.section, m.room) for m in sol.meetings})
+    assert sol.penalties["room_churn"] == rooms_used
+
+
+def test_long_day_grid_is_not_made_infeasible_by_penalty_bounds():
+    # 12 periods a day: the old fixed cap on penalty totals could cut off
+    # legal timetables on grids this long.
+    raw = copy.deepcopy(BASE)
+    raw["grid"] = {
+        "days": ["MON"],
+        "periods": [{"id": i, "start": "00:00", "end": "00:00"} for i in range(1, 13)],
+        "blocks": [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12]],
+    }
+    raw["staff"] = [{"id": "A", "name": "Alpha", "max_periods_per_day": 12}]
+    raw["courses"] = [
+        {"code": f"T{i}", "group": "G1", "kind": "theory", "hours": 1,
+         "sections": [{"staff": ["A"]}]}
+        for i in range(12)
+    ]
+    sol = solve(from_dict(raw))
+    assert sol.ok

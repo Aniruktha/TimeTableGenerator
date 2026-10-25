@@ -24,28 +24,45 @@ def check(inst: Instance) -> list[str]:
     free_slots = [s for s in grid.slots() if s not in inst.blocked_slots]
     n_free = len(free_slots)
 
-    # 1. A class cannot be taught more hours than the week has periods.
+    # 1. A class cannot be taught more hours than the week has periods.  This
+    #    is the only limit on a class's load: free periods are whatever is left
+    #    of the week, so there is no per-day floor or ceiling to check.
     for gid, grp in inst.groups.items():
-        demand = sum(unit[0].hours for unit in inst.occupancy_units(gid))
+        demand = inst.demand(gid)
         if demand > n_free:
             problems.append(
                 f"{grp.name}: {demand} periods of teaching demanded but only "
                 f"{n_free} slots exist in the week"
             )
-        cap = grp.max_periods_per_day * len(grid.days)
-        if demand > cap:
-            problems.append(
-                f"{grp.name}: {demand} periods demanded but max_periods_per_day="
-                f"{grp.max_periods_per_day} caps the week at {cap}"
-            )
-        floor = grp.min_periods_per_day * len(grid.days)
-        if demand < floor:
-            problems.append(
-                f"{grp.name}: only {demand} periods of teaching, but "
-                f"min_periods_per_day={grp.min_periods_per_day} requires at least {floor}"
-            )
 
-    # 2. A staff member cannot exceed the hours actually available to them.
+    # 2. Parallel sections of one course run at the same time, so nobody can
+    #    staff two of them.
+    for c in inst.courses:
+        seen: dict[str, int] = {}
+        for s in c.sections:
+            for sid in s.staff:
+                if sid in seen:
+                    problems.append(
+                        f"{c.uid} ({c.title}): {inst.staff[sid].name} is on batch "
+                        f"{seen[sid] + 1} and batch {s.index + 1}, which run at the "
+                        f"same time"
+                    )
+                seen.setdefault(sid, s.index)
+    #    Members of an elective basket also share their slots.
+    for gid in inst.groups:
+        for bname, members in inst.baskets(gid).items():
+            owner: dict[str, str] = {}
+            for c in members:
+                for sid in {sid for s in c.sections for sid in s.staff}:
+                    if sid in owner:
+                        problems.append(
+                            f"elective basket {bname!r} in {gid}: "
+                            f"{inst.staff[sid].name} teaches both {owner[sid]} and "
+                            f"{c.code}, which run at the same time"
+                        )
+                    owner.setdefault(sid, c.code)
+
+    # 3. A staff member cannot exceed the hours actually available to them.
     for sid, member in inst.staff.items():
         load = sum(c.hours for c, _ in inst.courses_of_staff(sid))
         if not load:
@@ -63,7 +80,7 @@ def check(inst: Instance) -> list[str]:
                 f"{member.max_periods_per_day} caps the week at {day_cap}"
             )
 
-    # 3. A course that meets at most once (or twice) a day needs that many days
+    # 4. A course that meets at most once (or twice) a day needs that many days
     #    to be *actually reachable* -- staff blackouts shrink the week.
     for c in inst.courses:
         dead = set(c.forbidden) | set(inst.blocked_slots)
@@ -98,7 +115,7 @@ def check(inst: Instance) -> list[str]:
                     f"day(s) available to its staff"
                 )
 
-    # 4. Rooms of each kind must cover peak simultaneous demand.
+    # 5. Rooms of each kind must cover peak simultaneous demand.
     #    Lower bound: total section-periods of a kind vs. (rooms x slots).
     supply: dict[str, int] = defaultdict(int)
     for r in inst.rooms.values():
@@ -116,7 +133,7 @@ def check(inst: Instance) -> list[str]:
                 f"{n_rooms} such rooms x {n_free} slots = {have} available"
             )
 
-    # 5. Labs can only sit in blocks, so lab demand competes for block-slots.
+    # 6. Labs can only sit in blocks, so lab demand competes for block-slots.
     n_blocks = len(grid.blocks) * len(grid.days)
     lab_room_blocks = sum(
         (c.hours // 2) * len(c.sections) for c in inst.courses if c.is_lab
@@ -128,7 +145,7 @@ def check(inst: Instance) -> list[str]:
             f"{lab_rooms} lab rooms x {n_blocks} blocks = {lab_rooms * n_blocks} available"
         )
 
-    # 6. Per-group lab blocks must fit in the week's blocks.
+    # 7. Per-group lab blocks must fit in the week's blocks.
     for gid, grp in inst.groups.items():
         blocks = sum(c.hours // 2 for c in inst.courses_of(gid) if c.is_lab)
         if blocks > n_blocks:
@@ -136,7 +153,7 @@ def check(inst: Instance) -> list[str]:
                 f"{grp.name}: {blocks} lab blocks demanded but the week has {n_blocks}"
             )
 
-    # 7. Two pinned things cannot occupy the same slot for the same group or staff.
+    # 8. Two pinned things cannot occupy the same slot for the same group or staff.
     by_group: dict[tuple[str, str, int], list[str]] = defaultdict(list)
     by_staff: dict[tuple[str, str, int], list[str]] = defaultdict(list)
     for c in inst.courses:
@@ -162,7 +179,7 @@ def check(inst: Instance) -> list[str]:
                 f"{', '.join(sorted(set(uids)))}"
             )
 
-    # 8. A pin must not land where the staff is unavailable.
+    # 9. A pin must not land where the staff is unavailable.
     for c in inst.courses:
         for slot in c.pins:
             for s in c.sections:

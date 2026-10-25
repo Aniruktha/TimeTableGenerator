@@ -225,7 +225,7 @@ def _slot_list(raw: Any, grid: Grid, where: str) -> frozenset[tuple[str, int]]:
 
 
 def load(path: str | Path) -> Instance:
-    raw = yaml.safe_load(Path(path).read_text())
+    raw = yaml.safe_load(Path(path).read_text(encoding='utf-8'))
     return from_dict(raw)
 
 

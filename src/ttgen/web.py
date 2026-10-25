@@ -100,7 +100,7 @@ def get_sample(sample_id: str) -> str:
     # data/ so "../../etc/passwd" cannot be read.
     if not path.resolve().is_relative_to(data_dir().resolve()) or not path.is_file():
         raise HTTPException(404, f"no sample named {sample_id!r}")
-    return path.read_text()
+    return path.read_text(encoding='utf-8')
 
 
 # --------------------------------------------------------------------------- #
@@ -157,7 +157,7 @@ def get_saved(setup_id: str) -> str:
     path = _saved_path(setup_id)
     if not path.is_file():
         raise HTTPException(404, "that setup is no longer here")
-    return path.read_text()
+    return path.read_text(encoding='utf-8')
 
 
 @app.delete("/api/saved/{setup_id}")
@@ -269,7 +269,7 @@ def save_setup(body: SaveBody) -> dict[str, Any]:
     setup_id = _SLUG.sub("-", title.lower()).strip("-")[:60] or "setup"
     path = _saved_path(setup_id)
     existed = path.is_file()
-    path.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True, width=100))
+    path.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True, width=100), encoding='utf-8')
     return {"id": setup_id, "name": title, "replaced": existed}
 
 
@@ -486,7 +486,7 @@ def _render(result_id: str, suffix: str, writer) -> str:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / f"timetable{suffix}"
         writer(inst, sol, path)
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
 
 @app.get("/api/result/{result_id}/timetable.csv")

@@ -66,7 +66,7 @@ class TimetableModel:
         self.sbusy: dict[tuple[str, str, int], cp_model.IntVar] = {}
 
         self._pen: dict[str, list] = defaultdict(list)   # name -> [linear terms]
-        self._pen_expr: dict[str, cp_model.IntVar] = {}
+        self._pen_expr: dict[str, cp_model.LinearExpr] = {}
 
         self._by_uid = {c.uid: c for c in inst.courses}
 
@@ -84,13 +84,10 @@ class TimetableModel:
         self._hard_availability()
         self._hard_staff_clash()
         self._hard_rooms()
-        self._hard_daily_load()
         self._soft_student_gaps()
         self._soft_staff_gaps_and_days()
         self._soft_late_periods()
         self._soft_adjacent_days()
-        self._soft_load_balance()
-        self._soft_free_bunching()
         self._soft_room_churn()
         self._soft_lab_spacing()
         self._objective()
@@ -118,7 +115,7 @@ class TimetableModel:
             for d, p in grid.slots():
                 self.sbusy[sid, d, p] = m.NewBoolVar(f"sbusy[{sid},{d},P{p}]")
 
-    # -- H1/H7/H8/H9/H10: weekly hours and the shape of a course's meetings -- #
+    # -- H1/H7-H11: weekly hours and the shape of a course's meetings ------- #
 
     def _hard_hours_and_shape(self) -> None:
         m, grid = self.m, self.grid
@@ -157,6 +154,17 @@ class TimetableModel:
                     m.Add(
                         sum(self.x[c.uid, d, p] for p in grid.periods) <= c.max_per_day
                     )
+                    if c.consecutive and c.max_per_day > 1:
+                        # A day's meetings form one unbroken run: never a
+                        # meeting, a hole, then the same subject again.
+                        ps = grid.periods
+                        for i, p in enumerate(ps):
+                            for j in range(i + 2, len(ps)):
+                                for r in ps[i + 1 : j]:
+                                    m.Add(
+                                        self.x[c.uid, d, p] + self.x[c.uid, d, ps[j]]
+                                        - self.x[c.uid, d, r] <= 1
+                                    )
 
             # H11: pinned slots
             for d, p in c.pins:
@@ -201,20 +209,23 @@ class TimetableModel:
 
     def _hard_staff_clash(self) -> None:
         m = self.m
-        teaches: dict[str, set[str]] = defaultdict(set)
+        # One entry per *section* the person staffs, not per course: the
+        # batches of a lab run simultaneously, so someone listed on two of
+        # them would be in two rooms at once and must count twice.
+        teaches: dict[str, list[str]] = defaultdict(list)
         for c in self.inst.courses:
             for s in c.sections:
                 for sid in s.staff:
-                    teaches[sid].add(c.uid)
+                    teaches[sid].append(c.uid)
 
         for sid in self.inst.staff:
-            uids = sorted(teaches.get(sid, ()))
+            uids = teaches.get(sid, [])
             for d, p in self.grid.slots():
                 if not uids:
                     m.Add(self.sbusy[sid, d, p] == 0)
                     continue
                 # Forcing the sum into a Bool is what makes this a clash
-                # constraint: two courses at once would need sbusy == 2.
+                # constraint: two sections at once would need sbusy == 2.
                 m.Add(sum(self.x[u, d, p] for u in uids) == self.sbusy[sid, d, p])
 
             cap = self.inst.staff[sid].max_periods_per_day
@@ -251,28 +262,22 @@ class TimetableModel:
             if len(vars_) > 1:
                 m.AddAtMostOne(vars_)
 
-    # -- H13: how full a class's day may be -------------------------------- #
-
-    def _hard_daily_load(self) -> None:
-        m, grid = self.m, self.grid
-        self.load: dict[tuple[str, str], cp_model.IntVar] = {}
-        for gid, grp in self.inst.groups.items():
-            for d in grid.days:
-                v = m.NewIntVar(
-                    grp.min_periods_per_day, grp.max_periods_per_day, f"load[{gid},{d}]"
-                )
-                m.Add(v == sum(self.busy[gid, d, p] for p in grid.periods))
-                self.load[gid, d] = v
-
     # ------------------------------------------------------------------ #
     # Soft constraints
     # ------------------------------------------------------------------ #
+
+    # Every penalty variable below is pinned in both directions, never just
+    # bounded from below.  The objective would push a one-sided variable down
+    # anyway, but only while its weight is non-zero; exact definitions keep
+    # the reported counts true for every weight, including 0.
 
     def _gap_vars(self, tag: str, occupied: dict[tuple[str, int], cp_model.IntVar]):
         """Count free periods that have a class both before and after them.
 
         A hole in the middle of the day is the thing everyone actually
-        complains about; a free last period is a gift, not a gap.
+        complains about; a free last period is a gift, not a gap.  This only
+        moves free periods to the ends of days -- how many there are is the
+        weekly arithmetic of slots minus teaching.
         """
         m, grid = self.m, self.grid
         gaps = []
@@ -287,9 +292,13 @@ class TimetableModel:
                 ending[p] = e
             for p in grid.periods:
                 g = m.NewBoolVar(f"gap[{tag},{d},P{p}]")
-                # g is pushed to 1 exactly when the slot is empty but enclosed;
-                # the objective's downward pressure keeps it at 0 otherwise.
-                m.Add(g >= started[p] + ending[p] - occupied[d, p] - 1)
+                # g == started AND ending AND NOT occupied: an enclosed hole.
+                m.AddBoolAnd(
+                    [started[p], ending[p], occupied[d, p].Not()]
+                ).OnlyEnforceIf(g)
+                m.AddBoolOr(
+                    [started[p].Not(), ending[p].Not(), occupied[d, p]]
+                ).OnlyEnforceIf(g.Not())
                 gaps.append(g)
         return gaps
 
@@ -340,58 +349,8 @@ class TimetableModel:
                 meets[d] = v
             for a, b in zip(grid.days, grid.days[1:]):
                 adj = m.NewBoolVar(f"adj[{c.uid},{a}-{b}]")
-                m.Add(adj >= meets[a] + meets[b] - 1)
+                m.AddMinEquality(adj, [meets[a], meets[b]])   # both days
                 self._pen["adjacent_days"].append(adj)
-
-    def _soft_load_balance(self) -> None:                      # S11
-        m, grid = self.m, self.grid
-        n_days = len(grid.days)
-        for gid, grp in self.inst.groups.items():
-            if grp.free_policy == "bunched":
-                continue          # deliberately uneven days are the whole point
-            demand = sum(u[0].hours for u in self.inst.occupancy_units(gid))
-            target = round(demand / n_days)
-            for d in grid.days:
-                dev = m.NewIntVar(0, len(grid.periods), f"dev[{gid},{d}]")
-                m.Add(dev >= self.load[gid, d] - target)
-                m.Add(dev >= target - self.load[gid, d])
-                self._pen["load_imbalance"].append(dev)
-
-    def _soft_free_bunching(self) -> None:                     # S14
-        """Herd a class's free periods onto as few days as possible.
-
-        A week holds a fixed number of free periods -- slots minus teaching --
-        so nothing here creates or destroys any; this only moves them.
-
-        What gets penalised is a *part-full* day: one with at least one class
-        and at least one free period.  Deliberately not "any day with a free
-        period", which would score a completely free day the same as a day
-        with one awkward hole in it and give the search no reason to prefer
-        the day off.  Under this measure the cheapest week is made of days
-        that are either full or empty, which is exactly the ask.
-
-        Only classes that opted in are included -- for everyone else
-        `load_imbalance` is pulling the other way, towards even days.
-        """
-        m, grid = self.m, self.grid
-        full = len(grid.periods)
-        for gid, grp in self.inst.groups.items():
-            if grp.free_policy != "bunched":
-                continue
-            for d in grid.days:
-                load = self.load[gid, d]
-                has_class = m.NewBoolVar(f"any[{gid},{d}]")
-                m.Add(load >= 1).OnlyEnforceIf(has_class)
-                m.Add(load == 0).OnlyEnforceIf(has_class.Not())
-
-                has_free = m.NewBoolVar(f"hasfree[{gid},{d}]")
-                m.Add(load <= full - 1).OnlyEnforceIf(has_free)
-                m.Add(load == full).OnlyEnforceIf(has_free.Not())
-
-                part = m.NewBoolVar(f"partday[{gid},{d}]")
-                m.AddBoolAnd([has_class, has_free]).OnlyEnforceIf(part)
-                m.AddBoolOr([has_class.Not(), has_free.Not()]).OnlyEnforceIf(part.Not())
-                self._pen["free_bunching"].append(part)
 
     def _soft_room_churn(self) -> None:                        # S10
         m, grid = self.m, self.grid
@@ -399,8 +358,9 @@ class TimetableModel:
             for s in c.sections:
                 for r in self.inst.candidate_rooms(c, s):
                     used = m.NewBoolVar(f"used[{c.uid},s{s.index},{r}]")
-                    for d, p in grid.slots():
-                        m.Add(used >= self.y[c.uid, s.index, d, p, r])
+                    m.AddMaxEquality(
+                        used, [self.y[c.uid, s.index, d, p, r] for d, p in grid.slots()]
+                    )
                     self._pen["room_churn"].append(used)
 
     def _soft_lab_spacing(self) -> None:                       # S13, S4
@@ -414,8 +374,11 @@ class TimetableModel:
                 same_day = [
                     self.blk[c.uid, d, k] for c in labs for k in range(n_blocks)
                 ]
-                extra = m.NewIntVar(0, len(labs), f"extralabs[{gid},{d}]")
-                m.Add(extra >= sum(same_day) - 1)
+                # extra == max(0, labs that day - 1)
+                n = m.NewIntVar(0, len(same_day), f"labsday[{gid},{d}]")
+                m.Add(n == sum(same_day))
+                extra = m.NewIntVar(0, len(same_day), f"extralabs[{gid},{d}]")
+                m.AddMaxEquality(extra, [0, n - 1])
                 self._pen["two_labs_per_day"].append(extra)
 
         if self.inst.weights.early_lab:
@@ -436,8 +399,9 @@ class TimetableModel:
             weight = getattr(w, name, 0)
             if not vars_:
                 continue
-            total = m.NewIntVar(0, len(vars_) * 10, f"total_{name}")
-            m.Add(total == sum(vars_))
+            # A plain expression, not a bounded IntVar: a guessed upper bound
+            # on the total could silently make a legal timetable infeasible.
+            total = sum(vars_)
             self._pen_expr[name] = total
             if weight:
                 terms.append(weight * total)

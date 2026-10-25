@@ -298,7 +298,9 @@ def _instance_payload(inst: Instance) -> dict[str, Any]:
                 "id": gid,
                 "name": g.name,
                 "strength": g.strength,
-                "demand": sum(u[0].hours for u in inst.occupancy_units(gid)),
+                "demand": inst.demand(gid),
+                # weekly, by subtraction -- there is no per-day free count
+                "free": inst.free_periods(gid),
                 "lab_blocks": sum(
                     c.hours // 2 for c in inst.courses_of(gid) if c.is_lab
                 ),

@@ -54,15 +54,16 @@ def cmd_check(args) -> int:
     console.print("\n[green]No arithmetic obstruction found.[/green] "
                   "[dim](necessary, not sufficient)[/dim]")
 
-    t = Table(title="Weekly demand per class", show_header=True)
+    t = Table(title="Weekly demand per class (free = week - teaching)", show_header=True)
     t.add_column("Class")
     t.add_column("Taught", justify="right")
     t.add_column("Free", justify="right")
     t.add_column("Lab blocks", justify="right")
     for gid, grp in inst.groups.items():
-        demand = sum(u[0].hours for u in inst.occupancy_units(gid))
         labs = sum(c.hours // 2 for c in inst.courses_of(gid) if c.is_lab)
-        t.add_row(grp.name, str(demand), str(inst.grid.n_slots - demand), str(labs))
+        t.add_row(
+            grp.name, str(inst.demand(gid)), str(inst.free_periods(gid)), str(labs)
+        )
     console.print(t)
     return 0
 
@@ -104,8 +105,8 @@ def cmd_solve(args) -> int:
         if sol.status == "INFEASIBLE":
             console.print(
                 "\nThe hard constraints contradict each other.  `tt workload` shows "
-                "who is overloaded; the usual culprits are a staff member's hours vs. "
-                "their available slots, and min/max periods per day being too tight."
+                "who is overloaded; the usual culprit is a staff member's hours vs. "
+                "their available slots."
             )
         else:
             console.print("\nNo solution found in the time limit -- try `--time 300`.")

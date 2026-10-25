@@ -19,14 +19,10 @@ from .config import Grid, Weights
 
 CourseKind = Literal["theory", "lab", "activity"]
 
-# What to do with a class's free periods.
-#   spread       leave the solver to place them (it already avoids mid-day gaps)
-#   daily_break  guarantee at least one free period every day
-#   packed       allow at most one free period a day, so the week runs full
-#   bunched      herd them onto as few days as possible, for whole free
-#                afternoons rather than scattered singles
-FREE_POLICIES = ("spread", "daily_break", "packed", "bunched")
 RoomKind = str  # "classroom", "lab", "seminar", ... free-form, matched by name
+
+# Group settings from the old per-day free-period model, refused on load.
+_PER_DAY_GROUP_KEYS = {"min_periods_per_day", "max_periods_per_day", "free_policy"}
 
 
 class InstanceError(ValueError):
@@ -71,12 +67,9 @@ class Group:
     id: str
     name: str
     strength: int = 40
-    min_periods_per_day: int = 0
-    max_periods_per_day: int = 8
-    # Where this class's free periods should fall.  How *many* there are is
-    # fixed arithmetic -- slots in the week minus periods of teaching -- so
-    # the only thing on offer is placement.  See FREE_POLICIES.
-    free_policy: str = "spread"
+    # Free periods are a weekly quantity, never a daily one: the solver places
+    # the class's teaching hours and every slot left over is free.  There is
+    # deliberately no per-day minimum or maximum for a class.
 
 
 @dataclass(frozen=True)
@@ -107,6 +100,8 @@ class Course:
     pins: tuple[tuple[str, int], ...] = ()   # (day, period) forced to be occupied
     forbidden: frozenset[tuple[str, int]] = frozenset()
     max_per_day: int = 1            # theory only; labs use one *block* per day
+    consecutive: bool = False       # same-day meetings must be adjacent periods
+    students: int = 0               # enrolment; 0 -> the whole class attends
 
     @property
     def uid(self) -> str:
@@ -144,11 +139,21 @@ class Instance:
     def seats_for(self, course: Course, section: Section) -> int:
         if section.seats:
             return section.seats
-        strength = self.groups[course.group].strength
+        # An elective only seats the students who chose it; anything else
+        # seats the whole class.
+        strength = course.students or self.groups[course.group].strength
         if course.is_lab and len(course.sections) > 1:
-            # class splits into batches, one per section
+            # the attendees split into parallel batches, one per section
             return -(-strength // len(course.sections))   # ceil
         return strength
+
+    def demand(self, group_id: str) -> int:
+        """Periods a week the class is taught (an elective basket counts once)."""
+        return sum(unit[0].hours for unit in self.occupancy_units(group_id))
+
+    def free_periods(self, group_id: str) -> int:
+        """Free periods a week: whatever the teaching does not fill."""
+        return self.grid.n_slots - len(self.blocked_slots) - self.demand(group_id)
 
     def candidate_rooms(self, course: Course, section: Section) -> list[str]:
         seats = self.seats_for(course, section)
@@ -271,34 +276,20 @@ def from_dict(raw: dict) -> Instance:
         staff[sid] = member
 
     groups: dict[str, Group] = {}
-    n_periods = len(grid.periods)
     for gr in raw.get("groups", []):
-        policy = str(gr.get("free_policy", "spread"))
-        if policy not in FREE_POLICIES:
+        # Refused rather than ignored: a file that asks for a daily cap must
+        # not quietly get a timetable without one.
+        legacy = sorted(set(gr) & _PER_DAY_GROUP_KEYS)
+        if legacy:
             raise InstanceError(
-                f"group {gr['id']!r}: unknown free_policy {policy!r}; "
-                f"expected one of {list(FREE_POLICIES)}"
+                f"group {gr['id']!r}: remove {', '.join(legacy)} -- free periods "
+                f"are counted per week, not per day, so per-day class limits no "
+                f"longer exist"
             )
-        lo = int(gr.get("min_periods_per_day", 0))
-        hi = int(gr.get("max_periods_per_day", n_periods))
-        # The two placement policies that are expressible as day-load bounds
-        # are folded in here, so preflight and the model both see the real
-        # numbers rather than having to know about policies.
-        if policy == "daily_break":
-            hi = min(hi, n_periods - 1)
-        elif policy == "packed":
-            lo = max(lo, n_periods - 1)
-        elif policy == "bunched":
-            # A whole free day is the point, so the floor has to come off --
-            # any positive minimum forbids the empty day outright.
-            lo = 0
         grp = Group(
             id=gr["id"],
             name=gr.get("name", gr["id"]),
             strength=int(gr.get("strength", 40)),
-            min_periods_per_day=lo,
-            max_periods_per_day=hi,
-            free_policy=policy,
         )
         if grp.id in groups:
             raise InstanceError(f"duplicate group id {grp.id!r}")
@@ -319,17 +310,23 @@ def from_dict(raw: dict) -> Instance:
             )
             for i, s in enumerate(secs)
         )
+        hours = int(c["hours"])
+        # Default: the fewest meetings per day that still fit the hours into
+        # the week -- 1 for a 5-hour subject, 2 for a 6-hour one.
+        spread = max(1, -(-hours // len(grid.days)))
         course = Course(
             code=c["code"],
             title=c.get("title", c["code"]),
             group=c["group"],
             kind=kind,
-            hours=int(c["hours"]),
+            hours=hours,
             sections=sections,
             basket=c.get("basket"),
             pins=tuple(sorted(_slot_list(c.get("pin"), grid, f"course {c['code']}"))),
             forbidden=_slot_list(c.get("forbid"), grid, f"course {c['code']}"),
-            max_per_day=int(c.get("max_per_day", 1)),
+            max_per_day=int(c.get("max_per_day", spread)),
+            consecutive=bool(c.get("consecutive", False)),
+            students=int(c.get("students", 0)),
         )
         courses.append(course)
 
@@ -373,6 +370,8 @@ def validate(inst: Instance) -> None:
         for s in c.sections:
             if not s.staff:
                 errs.append(f"{c.uid} section {s.index}: no staff assigned")
+            if len(set(s.staff)) != len(s.staff):
+                errs.append(f"{c.uid} section {s.index}: a staff member is listed twice")
             for sid in s.staff:
                 if sid not in inst.staff:
                     errs.append(f"{c.uid} section {s.index}: unknown staff {sid!r}")
@@ -390,13 +389,10 @@ def validate(inst: Instance) -> None:
                 errs.append(f"{c.uid}: {day} P{p} is both pinned and forbidden")
         if len(c.pins) > c.hours:
             errs.append(f"{c.uid}: {len(c.pins)} pins but only {c.hours}h")
-
-    for grp in inst.groups.values():
-        if grp.min_periods_per_day > grp.max_periods_per_day:
-            errs.append(
-                f"{grp.name}: needs at least {grp.min_periods_per_day} periods a day "
-                f"but is capped at {grp.max_periods_per_day} a day"
-            )
+        if c.max_per_day < 1:
+            errs.append(f"{c.uid}: max_per_day must be >= 1")
+        if c.students < 0:
+            errs.append(f"{c.uid}: students must be >= 0")
 
     # Elective baskets must agree on hours and kind, or they cannot share slots.
     for gid in inst.groups:

@@ -98,21 +98,19 @@ free periods = (days x periods per day) - periods of teaching
 ```
 
 For the shipped AMCS instance that is `40 - 33 = 7` per class, and no
-arrangement of the timetable changes it. What scheduling controls is *where*
-those seven fall. Each class picks one of four placements (`free_policy` in
-the YAML, "Where should the free periods go?" in the browser):
+arrangement of the timetable changes it.
 
-| Policy | Effect |
-| --- | --- |
-| `spread` | The default. Free periods land wherever suits, and mid-day gaps are already penalised heavily. |
-| `daily_break` | At least one free period every day — caps the day at `periods - 1`. |
-| `packed` | At most one free period a day. Only possible when teaching nearly fills the week. |
-| `bunched` | Herds free periods onto as few days as possible, for whole free afternoons or days. |
+**Free periods are a weekly quantity, never a daily one.** The solver places
+each class's teaching hours and every slot left over is free. There is no
+per-day minimum or maximum for a class, so a full Monday and a light Friday
+are both legal. The only thing that steers *where* the free periods land is
+S1: a free period stranded in the middle of a day is penalised heavily, so
+they collect at the start or end of days instead.
 
-`bunched` penalises **part-full days** — a day with some teaching *and* some
-free time — rather than any day containing a free period. Scoring it the
-other way rates a completely free day as badly as a day with one awkward hole,
-which removes the very reason to prefer the day off.
+The old per-day class settings (`min_periods_per_day`, `max_periods_per_day`
+and `free_policy` on a class, and the `load_imbalance` / `free_bunching`
+weights) are refused on load with a message saying to delete them — they are
+not silently ignored. Staff keep their own `max_periods_per_day` (H14).
 
 ### Getting the weekly total down
 
@@ -153,11 +151,10 @@ cross-branch conflicts. It is the smallest instance that still contains the
 actual difficulty.
 
 Numbers for the current instance: 4 classes, 40 courses, 27 staff, 16 rooms,
-~19k boolean variables. A **5-second** run already returns a fully legal
+~19k boolean variables. A **15-second** run already returns a fully legal
 timetable with zero mid-day idle periods for every class; longer runs trade the
-remaining cost down (681 at 5s, 628 at 30s, ~615 at 90s) without ever proving
-optimality, which does not matter here — see the note on reading the summary
-table below.
+remaining cost down (574 at 60s) without ever proving optimality, which does not
+matter here — see the note on reading the summary table below.
 
 ### The staged plan
 
@@ -184,10 +181,9 @@ constraint.** Total free periods = 40 − (total taught hours), and taught hours
 are fixed by the syllabus before the solver ever runs. The real Sem-2
 timetables carry 33–34 hours, so **6–7 free periods per week is what the
 department actually schedules today**, not 2. What you *can* control is *where*
-the free periods land, which is why the model works with `min/max
-periods_per_day` (currently 6–7) and a heavy penalty on mid-day holes rather
-than a weekly free-period count. If you genuinely need ≤2 free periods, you
-need ~38 hours of curriculum, and that is a decision for the board of studies.
+the free periods land, which is why the model counts free periods per week and
+only penalises mid-day holes. If you genuinely need ≤2 free periods, you need
+~38 hours of curriculum, and that is a decision for the board of studies.
 
 **2. Period 8 (16:20–17:10) is real but lightly used**, and the printed grid has
 12 columns of which only 8 are ever used at these semesters. Sem-6 BSc uses
@@ -210,19 +206,21 @@ and `tt check` tries to say why in words before the solver ever runs.
 | H1 | Every course gets exactly its prescribed weekly hours | `model._hard_hours_and_shape` |
 | H2 | A class is never in two places at once | `model._hard_group_clash` |
 | H3 | Elective-basket members occupy identical slots (students split between them) | `model._hard_baskets` |
-| H4 | A staff member is never double-booked — **across all branches and programmes** | `model._hard_staff_clash` |
+| H4 | A staff member is never double-booked — **across all branches and programmes**, and never on two parallel batches of one lab | `model._hard_staff_clash` |
 | H5 | A room hosts at most one session per period | `model._hard_rooms` |
-| H6 | Rooms must match kind, seat the class, and have required facilities | `data.Room.suits` |
+| H6 | Rooms must match kind, seat the class (or an elective's `students`), and have required facilities | `data.Room.suits` |
 | H7 | A lab occupies **one legal block** — `(1,2) (3,4) (5,6) (7,8)` — never across a break | `model._hard_hours_and_shape` |
 | H8 | A 4-hour lab is exactly two 2-period sessions | same |
 | H9 | Those sessions fall on different days | same |
-| H10 | A theory course meets at most `max_per_day` times a day (default 1, so a 5-hour subject spreads across the week) | same |
+| H10 | A theory course meets at most `max_per_day` times a day (default `ceil(hours / days)`: 1 for a 5-hour subject, 2 for a 6-hour one). With `consecutive: true` a day's meetings are adjacent periods | same |
 | H11 | Pinned activities land where they are pinned (e.g. the common tutor-ward hour) | same |
 | H12 | Staff unavailability windows are respected — visiting faculty, other-department commitments | `model._hard_availability` |
-| H13 | A class's day holds between `min_` and `max_periods_per_day` | `model._hard_daily_load` |
 | H14 | No staff member exceeds `max_periods_per_day` | `model._hard_staff_clash` |
 | H15 | Every parallel lab batch gets its own staff **and its own room**, simultaneously | `model._hard_rooms` |
 | H16 | College-wide blocked slots stay empty | `model._hard_availability` |
+
+There is no H13 any more: it bounded a class's periods per day, which is a
+per-day free-period rule. Free periods are counted per week (see above).
 
 **H7 is the one people get wrong.** "Two consecutive periods" is not enough —
 periods 2 and 3 are consecutive but have a 20-minute break between them. The
@@ -241,7 +239,6 @@ retune priorities without touching code; set one to `0` to switch it off.
 | S6 | No idle period in the middle of a staff member's day | 8 | |
 | S8 | Fewer days on campus per staff member | 5 | **Tripled for visiting/other-dept staff** — they travel in |
 | S10 | A section should keep the same room all week | 1 | |
-| S11 | Even day lengths across the week | 4 | No 8-period Monday against a 2-period Friday |
 | S13 | Avoid two labs in one day for a class | 6 | |
 | S4 | Prefer labs earlier in the day | 0 | Off by default; turn it on if the department wants it |
 

@@ -27,10 +27,8 @@ SOFT_LABELS: dict[str, str] = {
     "staff_days": "S8  staff days on campus",
     "late_period": "S5  theory in the last periods",
     "adjacent_days": "S2  same subject on back-to-back days",
-    "load_imbalance": "S11 uneven day lengths",
     "room_churn": "S10 rooms per section (min 1 each)",
     "two_labs_per_day": "S13 second lab in the same day",
-    "free_bunching": "S14 part-full days (some class, some free)",
     "early_lab": "S4  labs late in the day",
 }
 

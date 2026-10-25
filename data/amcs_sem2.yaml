@@ -97,10 +97,10 @@ staff:
     prefer_few_days: true
 
 groups:
-  - {id: SS-S2,  name: "M.Sc. Software Systems - Sem 2",           strength: 40, min_periods_per_day: 6, max_periods_per_day: 7}
-  - {id: CY-S2,  name: "M.Sc. Cyber Security - Sem 2",             strength: 40, min_periods_per_day: 6, max_periods_per_day: 7}
-  - {id: DS-S2,  name: "M.Sc. Data Science - Sem 2",               strength: 40, min_periods_per_day: 6, max_periods_per_day: 7}
-  - {id: TCS-S2, name: "M.Sc. Theoretical Computer Science - Sem 2", strength: 40, min_periods_per_day: 6, max_periods_per_day: 7}
+  - {id: SS-S2,  name: "M.Sc. Software Systems - Sem 2",           strength: 40}
+  - {id: CY-S2,  name: "M.Sc. Cyber Security - Sem 2",             strength: 40}
+  - {id: DS-S2,  name: "M.Sc. Data Science - Sem 2",               strength: 40}
+  - {id: TCS-S2, name: "M.Sc. Theoretical Computer Science - Sem 2", strength: 40}
 
 courses:
   # ===================== M.Sc. Software Systems ========================= #
@@ -251,7 +251,6 @@ weights:
   staff_days: 5
   late_period: 3
   adjacent_days: 2
-  load_imbalance: 4
   room_churn: 1
   two_labs_per_day: 6
   early_lab: 0

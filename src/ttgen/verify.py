@@ -62,6 +62,13 @@ def verify(inst: Instance, sol: Solution) -> list[str]:
                             f"H10 {c.uid}: {len(periods)} periods on {day}, "
                             f"max_per_day={c.max_per_day}"
                         )
+                    if c.consecutive and len(periods) > 1:
+                        idx = sorted(grid.periods.index(p) for p in periods)
+                        if idx[-1] - idx[0] != len(idx) - 1:
+                            v.append(
+                                f"H10 {c.uid}: meetings on {day} at P{sorted(periods)} "
+                                f"are not consecutive"
+                            )
 
             scheduled = {(mt.day, mt.period) for mt in got}
             for slot in c.pins:
@@ -118,11 +125,15 @@ def verify(inst: Instance, sol: Solution) -> list[str]:
             if len(set(slots)) > 1:
                 v.append(f"H3 basket {name!r} in {gid}: members are not in the same slots")
 
-    # H4 staff clash + per-day cap
+    # H4 staff clash + per-day cap.  Keyed per section: one person on two
+    # parallel batches of the same lab is just as double-booked as one person
+    # on two different courses.
     staff_slots: dict[tuple[str, str, int], set[str]] = defaultdict(set)
     for mt in sol.meetings:
         for sid in mt.staff:
-            staff_slots[sid, mt.day, mt.period].add(f"{mt.group}:{mt.course}")
+            staff_slots[sid, mt.day, mt.period].add(
+                f"{mt.group}:{mt.course}/s{mt.section}"
+            )
     for (sid, day, p), what in staff_slots.items():
         if len(what) > 1:
             v.append(
@@ -144,16 +155,4 @@ def verify(inst: Instance, sol: Solution) -> list[str]:
         if len(what) > 1:
             v.append(f"H5 room {room} double-booked on {day} P{p}: {sorted(what)}")
 
-    # H13 class daily load bounds
-    load: dict[tuple[str, str], set[int]] = defaultdict(set)
-    for mt in sol.meetings:
-        load[mt.group, mt.day].add(mt.period)
-    for gid, grp in inst.groups.items():
-        for day in grid.days:
-            n = len(load[gid, day])
-            if not (grp.min_periods_per_day <= n <= grp.max_periods_per_day):
-                v.append(
-                    f"H13 {grp.name}: {n} periods on {day}, allowed "
-                    f"{grp.min_periods_per_day}-{grp.max_periods_per_day}"
-                )
     return v

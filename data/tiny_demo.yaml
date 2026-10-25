@@ -38,8 +38,7 @@ staff:
     unavailable: ["MON:*", "WED:*"]
 
 groups:
-  - {id: MSC-DEMO, name: "M.Sc. Demo -- Semester 1", strength: 40,
-     min_periods_per_day: 2, max_periods_per_day: 6}
+  - {id: MSC-DEMO, name: "M.Sc. Demo -- Semester 1", strength: 40}
 
 courses:
   - code: DM101

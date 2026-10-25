@@ -336,12 +336,9 @@ const PHRASES = [
   [/^(.+?): (\d+) periods of teaching demanded but only (\d+) slots exist in the week$/,
    (m) => `${m[1]} has ${m[2]} periods of subjects but only ${m[3]} slots in the week. ` +
      `Cut some hours, or add more periods to the day.`],
-  [/^(.+?): (\d+) periods demanded but max_periods_per_day=(\d+) caps the week at (\d+)$/,
-   (m) => `${m[1]} has ${m[2]} periods of subjects, but "most periods in a day" of ` +
-     `${m[3]} only allows ${m[4]} a week. Raise that limit.`],
-  [/^(.+?): only (\d+) periods of teaching, but min_periods_per_day=(\d+) requires at least (\d+)$/,
-   (m) => `${m[1]} only has ${m[2]} periods of subjects, but "fewest periods in a day" ` +
-     `of ${m[3]} would need ${m[4]}. Lower that, or add more subjects.`],
+  [/^(\S+?):(\S+?) \((.+?)\): (.+?) is on batch (\d+) and batch (\d+), which run at the same time$/,
+   (m) => `${m[2]} (${m[3]}): ${m[4]} is down for batch ${m[5]} and batch ${m[6]}, but ` +
+     `the batches of a lab run at the same time. Give one of them a different teacher.`],
   [/^rooms of kind '(\w+)': (\d+) room-periods needed but only .*= (\d+) available$/,
    (m) => `You need ${m[2]} ${m[1]} bookings across the week but your ${m[1]}s only ` +
      `offer ${m[3]}. Add another ${m[1]}.`],
@@ -401,13 +398,6 @@ function shorterDay(gid, want = 1) {
   const per = Math.ceil((demand + want) / days);
   return {periods: per, free: days * per - demand};
 }
-
-const FREE_POLICIES = {
-  spread:      "Let the timetable decide",
-  daily_break: "At least one free period every day",
-  packed:      "Pack the week — at most one free period a day",
-  bunched:     "Bunch them together — aim for whole free days",
-};
 
 const roomIds  = () => S.rooms.map(r => r.id);
 const staffIds = () => S.staff.map(s => s.id);
@@ -504,17 +494,14 @@ const IMPORTS = {
   },
   groups: {
     file: "classes.csv",
-    cols: ["name","students","min_per_day","max_per_day"],
-    example: ["M.Sc. Software Systems","40","2","6"],
-    example2: ["M.Sc. Data Science","35","2","6"],
-    hint: "One row per group of students who must never be in two places at once. " +
-          "<code>min_per_day</code> and <code>max_per_day</code> are optional.",
+    cols: ["name","students"],
+    example: ["M.Sc. Software Systems","40"],
+    example2: ["M.Sc. Data Science","35"],
+    hint: "One row per group of students who must never be in two places at once.",
     make: (r, taken) => ({
       id: slug(r.name, taken),
       name: r.name,
       strength: +r.students || 40,
-      min_periods_per_day: +r.min_per_day || 0,
-      max_periods_per_day: +r.max_per_day || S.grid.periods.length,
     }),
   },
   courses: {
@@ -821,33 +808,6 @@ function viewTeachers() {
 
 /* ----------------------------------------------------------- 4. classes */
 
-function policyNote(policy, gid) {
-  const P = S.grid.periods.length, days = S.grid.days.length;
-  const demand = gid ? demandFor(gid) : null;
-  if (policy === "daily_break") {
-    const cap = days * (P - 1);
-    const bad = demand !== null && demand > cap;
-    return `Every day keeps at least one period free, so nobody is in class from
-      first bell to last. That caps the week at ${cap} periods${
-      bad ? ` — but this class needs ${demand}, so it will not fit.` : "."}`;
-  }
-  if (policy === "packed") {
-    const floor = days * (P - 1);
-    const bad = demand !== null && demand < floor;
-    return `Days run full — at most one free period each. That needs at least
-      ${floor} periods of subjects${bad
-        ? `, but this class only has ${demand}. Either add more subjects or shorten the day.`
-        : "."}`;
-  }
-  if (policy === "bunched") {
-    return `Free periods get herded onto as few days as possible, so you get whole
-      free days or afternoons instead of odd gaps scattered through the week.
-      Day length is left uneven on purpose.`;
-  }
-  return `The timetable decides where they fall. It already avoids free periods
-    stranded in the middle of a day.`;
-}
-
 function freeSummary(gid) {
   const demand = demandFor(gid), free = freeFor(gid), slots = slotsInWeek();
   if (!demand) return "";
@@ -857,9 +817,10 @@ function freeSummary(gid) {
     <b>${slots}</b> (${S.grid.days.length} days &times; ${S.grid.periods.length}
     periods). ${free < 0
       ? `That is <b>${-free} too many to fit</b> — drop some hours or lengthen the day.`
-      : `So it will have <b>exactly ${free} free period${free === 1 ? "" : "s"}</b> a week,
-         whatever order things go in — scheduling decides <i>where</i> they fall, never
-         how many there are.`}
+      : `So it will have <b>exactly ${free} free period${free === 1 ? "" : "s"}</b> a week.
+         Free periods are counted per week, not per day: the subjects are placed first
+         and whatever is left over is free. The timetable keeps them out of the middle
+         of a day where it can.`}
     ${free > 1 && alt.periods < S.grid.periods.length
       ? `<br>To get down to ${alt.free === 1 ? "just 1" : alt.free}, shorten the day to
          <b>${alt.periods} periods</b> (Start step) — that is the closest
@@ -877,7 +838,6 @@ function viewClasses() {
       <td class="num">${subj.length}</td>
       <td class="num">${demandFor(g.id)} / ${slotsInWeek()}</td>
       <td class="num" style="${free < 0 ? "color:var(--red);font-weight:700" : ""}">${free}</td>
-      <td>${esc(FREE_POLICIES[g.free_policy || "spread"])}</td>
       <td class="act">
         <button class="btn tiny" data-edit="groups" data-i="${i}">Edit</button>
         <button class="btn tiny danger" data-del="groups" data-i="${i}">Delete</button></td>
@@ -885,8 +845,6 @@ function viewClasses() {
   }).join("");
 
   const e = editing?.section === "groups" ? S.groups[editing.index] : null;
-  const policy = e?.free_policy || "spread";
-  const P = S.grid.periods.length;
   return `<div class="card">
     <div class="head">
       <h2>Classes</h2>
@@ -896,8 +854,8 @@ function viewClasses() {
     <div class="inner">
       ${S.groups.length ? `<table class="list">
         <tr><th>Class</th><th class="num">Students</th><th class="num">Subjects</th>
-            <th class="num">Periods used</th><th class="num">Free</th>
-            <th>Free periods go</th><th></th></tr>${rows}</table>`
+            <th class="num">Periods used</th><th class="num">Free / week</th>
+            <th></th></tr>${rows}</table>`
       : `<div class="empty"><b>No classes yet</b>Add your first one below.</div>`}
 
       <div class="sec-title">${e ? "Edit class" : "Add a class"}</div>
@@ -908,20 +866,6 @@ function viewClasses() {
         <div class="f"><label>Number of students</label>
           <input type="number" id="g_str" min="1" value="${e?e.strength:40}">
           <p class="help">Used to pick rooms big enough.</p></div>
-      </div>
-      <div class="f" style="margin-top:14px">
-        <label>Where should the free periods go?</label>
-        <select id="g_policy" style="max-width:460px">${Object.entries(FREE_POLICIES).map(([k,v]) =>
-          `<option value="${k}"${policy===k?" selected":""}>${esc(v)}</option>`).join("")}</select>
-        <p class="help" id="g_policy_note">${policyNote(policy, e?.id)}</p>
-      </div>
-      <div class="grid2" id="g_bounds" style="margin-top:14px" ${policy==="spread"?"":"hidden"}>
-        <div class="f"><label>Fewest periods in a day</label>
-          <input type="number" id="g_min" min="0" max="${P}" value="${e?(e.min_periods_per_day??0):0}">
-          <p class="help">Stops a day with a single lonely class in it.</p></div>
-        <div class="f"><label>Most periods in a day</label>
-          <input type="number" id="g_max" min="1" max="${P}"
-            value="${e?(e.max_periods_per_day??P):P}"></div>
       </div>
       <div class="btnrow" style="margin-top:14px">
         <button class="btn primary" data-save="groups">${e ? "Save changes" : "Add class"}</button>
@@ -1200,7 +1144,6 @@ function tabQuality() {
     staff_days:"Days a teacher has to come in",
     late_period:"Theory classes in the last period",
     adjacent_days:"Same subject on two days in a row",
-    load_imbalance:"Some days much longer than others",
     room_churn:"A class moving between more rooms than needed",
     two_labs_per_day:"Two labs squeezed into one day",
     early_lab:"Labs late in the day",
@@ -1274,22 +1217,11 @@ function collectGroup(prev) {
   const name = $("g_name").value.trim();
   if (!name) return alert("Please give the class a name.");
   const taken = groupIds().filter((_,i) => !(editing && editing.index === i));
-  const P = S.grid.periods.length;
-  const policy = $("g_policy").value;
-  // Two of the policies are just day-load bounds; write them out explicitly so
-  // the saved file says what it means rather than relying on the policy name.
-  let lo = 0, hi = P;
-  if (policy === "spread") { lo = +$("g_min").value || 0; hi = +$("g_max").value || P; }
-  else if (policy === "daily_break") hi = P - 1;
-  else if (policy === "packed") lo = P - 1;
   return {
-    ...(prev || {}),
+    ...withoutPerDay(prev || {}),
     id: prev ? prev.id : slug(name, taken),
     name,
     strength: +$("g_str").value || 40,
-    free_policy: policy,
-    min_periods_per_day: lo,
-    max_periods_per_day: hi,
   };
 }
 function collectCourse(prev) {
@@ -1450,11 +1382,6 @@ document.body.addEventListener("input", (ev) => {
   const t = ev.target;
   if (t.dataset.set === "name") S.name = t.value;
   if (t.dataset.per !== undefined) S.grid.periods[+t.dataset.per][t.dataset.k] = t.value;
-  if (t.id === "g_policy") {
-    const gid = editing?.section === "groups" ? S.groups[editing.index].id : null;
-    $("g_bounds").hidden = t.value !== "spread";
-    $("g_policy_note").innerHTML = policyNote(t.value, gid);
-  }
   if (t.id === "c_kind" || t.id === "c_batches") {
     // batches only make sense for a lab; re-render the teacher pickers
     const kind = $("c_kind").value;
@@ -1480,11 +1407,13 @@ function reblock() {
   const ids = S.grid.periods.map(p => p.id);
   S.grid.blocks = [];
   for (let i = 0; i + 1 < ids.length; i += 2) S.grid.blocks.push([ids[i], ids[i+1]]);
-  // shortening the day can leave a class allowed more periods than exist
-  S.groups.forEach(g => {
-    g.max_periods_per_day = Math.min(g.max_periods_per_day ?? ids.length, ids.length);
-    g.min_periods_per_day = Math.min(g.min_periods_per_day ?? 0, ids.length);
-  });
+}
+
+/* Free periods are weekly, so the old per-day class settings are dropped from
+   anything loaded -- the server refuses them rather than ignoring them. */
+function withoutPerDay(g) {
+  const {min_periods_per_day, max_periods_per_day, free_policy, ...rest} = g;
+  return rest;
 }
 
 /* Fill in anything a hand-written file left out, so the form never sees holes. */
@@ -1494,8 +1423,11 @@ function normalise(raw) {
   s.rooms = (raw.rooms || []).map(r => ({facilities:[], capacity:60, kind:"classroom", ...r}));
   s.staff = (raw.staff || []).map(x => ({kind:"internal", unavailable:[],
     max_periods_per_day:6, name:x.id, ...x}));
-  s.groups = (raw.groups || []).map(g => ({strength:40, min_periods_per_day:0,
-    max_periods_per_day:s.grid.periods.length, name:g.id, free_policy:"spread", ...g}));
+  s.groups = (raw.groups || []).map(g => ({strength:40, name:g.id, ...withoutPerDay(g)}));
+  if (s.weights) {
+    const {load_imbalance, free_bunching, ...w} = s.weights;
+    s.weights = w;
+  }
   s.courses = (raw.courses || []).map(c => ({kind:"theory", title:c.code,
     ...c, sections: (c.sections || [{}]).map(x => ({staff:[], ...x}))}));
   return s;

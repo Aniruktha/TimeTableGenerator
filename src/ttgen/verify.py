@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from .data import Instance
-from .model import Meeting, Solution
+from .types import Meeting, Solution
 
 
 def verify(inst: Instance, sol: Solution) -> list[str]:

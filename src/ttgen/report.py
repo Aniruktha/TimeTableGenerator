@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .data import Instance
-from .model import Meeting, Solution
+from .types import Meeting, Solution
 
 FREE = "·"
 

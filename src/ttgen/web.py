@@ -28,7 +28,8 @@ from . import data as data_mod
 from . import preflight, report, verify
 from .config import Weights
 from .data import Instance, InstanceError
-from .model import Solution, TimetableModel
+from .model import TimetableModel
+from .types import Solution
 
 STATIC = Path(__file__).parent / "static"
 

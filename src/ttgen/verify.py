@@ -14,8 +14,11 @@ from .data import Instance
 from .model import Meeting, Solution
 
 
-def verify(inst: Instance, sol: Solution) -> list[str]:
-    """Return a list of hard-constraint violations; empty means the timetable is legal."""
+def verify(inst: Instance, sol: Solution, baseline=None) -> list[str]:
+    """Return a list of hard-constraint violations; empty means the timetable is legal.
+
+    With a ``baseline``, its locked rows are checked too (H18).
+    """
     v: list[str] = []
     grid = inst.grid
     by_course: dict[tuple[str, int], list[Meeting]] = defaultdict(list)
@@ -96,6 +99,20 @@ def verify(inst: Instance, sol: Solution) -> list[str]:
                         f"H6 {c.uid} s{s.index}: {mt.room} does not satisfy "
                         f"kind={s.room_kind} seats>={need_seats} needs={sorted(s.needs)}"
                     )
+            # H6b home room / fixed room, re-derived here rather than trusting
+            # candidate_rooms: the rules are simple enough to state twice.
+            home = inst.home_room_of(c, s)
+            for mt in got:
+                if home and mt.room != home:
+                    v.append(
+                        f"H6 {c.uid}: {mt.day} P{mt.period} in {mt.room}, not the "
+                        f"class's home room {home}"
+                    )
+                elif s.rooms and mt.room not in s.rooms:
+                    v.append(
+                        f"H6 {c.uid} s{s.index}: {mt.day} P{mt.period} in {mt.room}, "
+                        f"which is not one of its rooms {list(s.rooms)}"
+                    )
 
     # H2 class clash (a whole elective basket counts as one occupancy)
     unit_of: dict[str, str] = {}
@@ -146,6 +163,40 @@ def verify(inst: Instance, sol: Solution) -> list[str]:
         cap = inst.staff[sid].max_periods_per_day
         if n > cap:
             v.append(f"H4 {inst.staff[sid].name}: {n} periods on {day}, cap is {cap}")
+
+    # H17 longest unbroken run of teaching per staff member
+    for sid, member in inst.staff.items():
+        k = member.max_consecutive
+        if not k:
+            continue
+        for day in grid.days:
+            run = 0
+            for p in grid.periods:
+                run = run + 1 if (sid, day, p) in staff_slots else 0
+                if run > k:
+                    v.append(f"H17 {member.name}: more than {k} periods in a row on {day}")
+                    break
+
+    # H18 locked periods of the baseline stay put
+    if baseline:
+        from .baseline import split
+
+        usable, _ = split(inst, baseline)
+        at = {(mt.group, mt.course, mt.section, mt.day, mt.period): mt.room
+              for mt in sol.meetings}
+        for e in usable:
+            if not e.locked:
+                continue
+            key = (e.group, e.course, e.section, e.day, e.period)
+            if key not in at:
+                v.append(f"H18 {e.uid} b{e.section + 1}: locked at {e.day} P{e.period} but moved")
+            elif e.room and e.room in inst.rooms and at[key] != e.room:
+                c = next(c for c in inst.courses if c.uid == e.uid)
+                if e.room in inst.candidate_rooms(c, c.sections[e.section]):
+                    v.append(
+                        f"H18 {e.uid} b{e.section + 1}: locked in {e.room} at "
+                        f"{e.day} P{e.period} but placed in {at[key]}"
+                    )
 
     # H5 room clash
     room_slots: dict[tuple[str, str, int], list[str]] = defaultdict(list)

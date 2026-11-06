@@ -82,6 +82,9 @@ class Weights:
     room_churn: int = 1            # S10 distinct rooms a section is spread over
     two_labs_per_day: int = 6      # S13 a class doing two labs on one day
     early_lab: int = 0             # S4  labs late in the day (0 = don't care)
+    # Only used when re-planning from a published timetable (a baseline):
+    changed_slot: int = 100        # R1  a published period that had to move
+    changed_room: int = 10         # R2  a kept period that switched room
     # S11 (even day lengths) and S14 (free-period bunching) are gone: free
     # periods are a weekly count, so nothing scores how they fall per day.
 

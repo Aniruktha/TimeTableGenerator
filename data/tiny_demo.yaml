@@ -38,7 +38,7 @@ staff:
     unavailable: ["MON:*", "WED:*"]
 
 groups:
-  - {id: MSC-DEMO, name: "M.Sc. Demo -- Semester 1", strength: 40}
+  - {id: MSC-DEMO, name: "M.Sc. Demo -- Semester 1", strength: 40, home_room: R101}
 
 courses:
   - code: DM101

@@ -33,8 +33,14 @@ line they come from one YAML file. Two ready-made ones are bundled in `data/`:
 | `data/amcs_sem2.yaml` | The real slice — four M.Sc. branches, 40 courses, 27 staff. Needs 60–120s. |
 
 **Output** is a timetable in three views (per class, per staff member, per
-room) plus two exports: `timetable.csv`, one row per scheduled meeting, and
-`timetable.html`, a standalone page with its styles inlined.
+room) plus two exports:
+
+- `timetable.html` — print-ready, one timetable per sheet (A4 landscape): every
+  class with the subject / faculty / room list under its grid, every teacher's
+  week, every room's week, and a teacher-workload summary. Print it, or use the
+  browser's *Save as PDF*.
+- `timetable.csv` — one row per scheduled meeting, with a `locked` column. Keep
+  it: it is the file you re-plan from later (see below).
 
 ### In the browser
 
@@ -86,7 +92,61 @@ uv run tt --data path/to/mine.yaml solve --time 120 --rooms
 
 Useful flags: `--time` (search budget in seconds), `--seed` (a different seed
 gives a different timetable of similar quality), `--staff` (staff names inside
-the class grids), `--staff-grids`, `--rooms`, `--log`.
+the class grids), `--staff-grids`, `--rooms`, `--log`, and `--baseline` (below).
+
+`tt web --port 8001` picks another port; if the port is taken it says so
+instead of crashing.
+
+## Re-planning a published timetable
+
+Once a timetable is out, a change in week six must not hand everyone a new
+week. Give the solver the timetable you published and it moves only what the
+change forces:
+
+```bash
+uv run tt solve --baseline out/timetable.csv     # the CSV you published
+```
+
+- Every published period that moves costs `changed_slot` (100) and every kept
+  period that changes room costs `changed_room` (10) — both outweigh every
+  comfort preference, so nothing moves for the sake of tidiness.
+- Rows with `locked` = `yes` are **hard**: that subject stays in that slot (and
+  room). Mark them in the CSV, or click a period in the browser and choose
+  *Lock here*.
+- The run ends with what changed: periods moved (old → new), rooms changed,
+  classes affected and the teachers to tell.
+- Locks that can no longer hold (the teacher is now away, the slot is now
+  blocked, two locks collide) are refused before solving, with the reason.
+  Rows that no longer match the data (a deleted subject) are listed and skipped.
+
+On the AMCS instance, giving JANANI K a new Monday-morning commitment moves
+**4 of 133** class-periods (her two Monday labs) and nothing else, in about 5
+seconds. Without a baseline the same re-solve reshuffles most of the week.
+
+In the browser it is one flow: generate, then click any period to **lock** it
+or **move it elsewhere** (that adds a "not here" rule to the subject), and press
+**Re-plan now**. Changed periods are outlined. The latest timetable travels
+inside the setup, so *Save to this site* keeps it, and a re-plan weeks later
+starts from it; *Load a published timetable (CSV)* on the Generate step does
+the same from a file. *Try a different one* makes a fresh timetable that still
+honours the locks.
+
+## When no timetable exists
+
+`tt check` catches the arithmetic impossibilities up front. When the data
+passes those but the solver still proves there is no timetable, it now says
+which rules clash instead of just "infeasible": every relaxable rule (a
+teacher's unavailability, daily cap or run limit, a subject's once-a-day
+spread, a pin, a lock, a home room, lab sessions on different days) gets an
+assumption literal, and CP-SAT returns a set of them that cannot all hold:
+
+```
+No timetable exists.  These rules cannot all hold together -- relax at least one:
+  x ABILASHA P B being unavailable at all of MON, all of TUE, all of WED
+  x ABILASHA P B teaching at most 4 periods a day
+  x 23XC26 Data Structures Laboratory (...) holding its lab sessions on different days
+  ...
+```
 
 ## Free periods
 
@@ -153,7 +213,7 @@ actual difficulty.
 Numbers for the current instance: 4 classes, 40 courses, 27 staff, 16 rooms,
 ~19k boolean variables. A **15-second** run already returns a fully legal
 timetable with zero mid-day idle periods for every class; longer runs trade the
-remaining cost down (574 at 60s) without ever proving optimality, which does not
+remaining cost down (about 545 at 60s, with home rooms) without ever proving optimality, which does not
 matter here — see the note on reading the summary table below.
 
 ### The staged plan
@@ -208,7 +268,7 @@ and `tt check` tries to say why in words before the solver ever runs.
 | H3 | Elective-basket members occupy identical slots (students split between them) | `model._hard_baskets` |
 | H4 | A staff member is never double-booked — **across all branches and programmes**, and never on two parallel batches of one lab | `model._hard_staff_clash` |
 | H5 | A room hosts at most one session per period | `model._hard_rooms` |
-| H6 | Rooms must match kind, seat the class (or an elective's `students`), and have required facilities | `data.Room.suits` |
+| H6 | Rooms must match kind, seat the class (or an elective's `students`), and have required facilities. A class with a `home_room` has all its whole-class theory and activity periods there; a subject with `room:` / `rooms:` uses only those | `data.Instance.candidate_rooms` |
 | H7 | A lab occupies **one legal block** — `(1,2) (3,4) (5,6) (7,8)` — never across a break | `model._hard_hours_and_shape` |
 | H8 | A 4-hour lab is exactly two 2-period sessions | same |
 | H9 | Those sessions fall on different days | same |
@@ -218,6 +278,8 @@ and `tt check` tries to say why in words before the solver ever runs.
 | H14 | No staff member exceeds `max_periods_per_day` | `model._hard_staff_clash` |
 | H15 | Every parallel lab batch gets its own staff **and its own room**, simultaneously | `model._hard_rooms` |
 | H16 | College-wide blocked slots stay empty | `model._hard_availability` |
+| H17 | No staff member teaches more than `max_consecutive` periods in a row (0 = no limit; short breaks don't reset the count) | `model._hard_staff_clash` |
+| H18 | Locked periods of a baseline stay in their slot and room | `model._baseline` |
 
 There is no H13 any more: it bounded a class's periods per day, which is a
 per-day free-period rule. Free periods are counted per week (see above).
@@ -241,6 +303,24 @@ retune priorities without touching code; set one to `0` to switch it off.
 | S10 | A section should keep the same room all week | 1 | |
 | S13 | Avoid two labs in one day for a class | 6 | |
 | S4 | Prefer labs earlier in the day | 0 | Off by default; turn it on if the department wants it |
+| R1 | A published period that had to move | 100 | Only with `--baseline` |
+| R2 | A kept period that changed room | 10 | Only with `--baseline` |
+
+### Rooms
+
+Give each class its lecture hall and it stays there:
+
+```yaml
+groups:
+  - {id: SS-S2, name: "M.Sc. Software Systems - Sem 2", strength: 40, home_room: M201}
+courses:
+  - {code: SMR, ..., room: SEMINAR_HALL}   # a subject that always meets in one place
+```
+
+Labs, electives (whose students split across parallel rooms) and subjects with
+their own `room` are placed by their own rules. The bundled AMCS file assigns
+M201/M202/M503/M504 as **placeholders** — set them to the rooms on the published
+timetable. Staff take `max_consecutive: 3` the same way.
 
 Weights are ordinal, not absolute: `student_gap: 40` against `late_period: 3`
 says the solver should happily push a dozen classes into the last period to
@@ -287,6 +367,7 @@ src/ttgen/config.py     time grid (periods, breaks, legal lab blocks) + weights
 src/ttgen/data.py       instance model, YAML loader, data validation
 src/ttgen/preflight.py  counting arguments that prove infeasibility early
 src/ttgen/model.py      the CP-SAT model — hard constraints, then soft
+src/ttgen/baseline.py   published timetable as a baseline: load, locks, diff
 src/ttgen/verify.py     independent re-check of a solution
 src/ttgen/report.py     class / staff / room views, CSV + HTML export
 src/ttgen/cli.py        tt check | workload | solve | web

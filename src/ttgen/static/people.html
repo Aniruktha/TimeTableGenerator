@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>People · Timetable</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+.bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 16px;border-bottom:1px solid var(--line)}
+.bar .input{max-width:260px;padding:8px 12px}
+.who{display:flex;gap:10px;align-items:center;min-width:0}
+.who b{display:block;font-size:14px}
+.who small{color:var(--muted);font-family:var(--mono);font-size:12px}
+.more{position:relative}
+.more .menu{min-width:190px}
+.credtable td{font-family:var(--mono);font-size:13px}
+.credtable td:first-child{font-family:var(--font)}
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="phead">
+    <div><h1>People</h1><p>Who can sign in, and whose timetable each login shows.</p></div>
+    <div class="tb-sp"></div>
+    <div class="btns">
+      <button class="btn" id="allteachers">Add every teacher</button>
+      <button class="btn" id="importst">Import students (CSV)</button>
+      <button class="btn primary" id="add">+ Add a person</button>
+    </div>
+  </div>
+  <div id="nolive" class="note warn" style="margin-bottom:16px" hidden>
+    <span>⚠</span><span><b>Nothing is published yet.</b> Teacher and student logins are linked to a teacher or class in
+    the live timetable. <a href="/admin">Publish one</a> first, then add people.</span></div>
+  <div class="card">
+    <div class="bar">
+      <div class="seg" id="tabs"></div>
+      <div class="tb-sp"></div>
+      <input class="input" id="q" type="search" placeholder="Search name, login or class…">
+    </div>
+    <div class="scroll-x" id="list"><div class="loading"><span class="spinner"></span></div></div>
+  </div>
+</main>
+<input type="file" id="file" accept=".csv,text/csv" hidden>
+
+<script src="/static/app.js"></script>
+<script>
+"use strict";
+const {$, esc, api} = TT;
+let me, users = [], links = {staff: [], groups: [], live: false}, tab = "all";
+
+const staffName = (id) => links.staff.find(s => s.id === id)?.name;
+const groupName = (id) => links.groups.find(g => g.id === id)?.name;
+const usernameFrom = (s) => String(s).toLowerCase().replace(/^(dr|mr|ms|mrs|prof)[._\s]+/, "")
+  .replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "").slice(0, 60) || "user";
+
+function linkCell(u) {
+  if (u.role === "admin") return `<span style="color:var(--faint)">—</span>`;
+  const id = u.role === "teacher" ? u.staff_id : u.group_id;
+  const name = u.role === "teacher" ? staffName(id) : groupName(id);
+  if (name) return esc(name);
+  return `<span class="tag bad" title="Not in the live timetable">${esc(id || "not linked")} · not in live timetable</span>`;
+}
+
+function statusCell(u) {
+  if (!u.active) return `<span class="tag">Disabled</span>`;
+  if (u.must_change) return `<span class="tag warn">Hasn't signed in yet</span>`;
+  return `<span class="tag ok">Active</span>`;
+}
+
+function draw() {
+  const count = (r) => users.filter(u => r === "all" || u.role === r).length;
+  $("tabs").innerHTML = [["all", "Everyone"], ["teacher", "Teachers"], ["student", "Students"], ["admin", "Admins"]]
+    .map(([k, l]) => `<button class="${k === tab ? "on" : ""}" data-tab="${k}">${l} <span class="n">${count(k)}</span></button>`).join("");
+  const q = $("q").value.trim().toLowerCase();
+  const rows = users.filter(u => (tab === "all" || u.role === tab) && (!q ||
+    [u.name, u.username, staffName(u.staff_id), groupName(u.group_id), u.group_id, u.staff_id]
+      .some(x => String(x || "").toLowerCase().includes(q))));
+  $("list").innerHTML = rows.length ? `<table class="t">
+    <tr><th>Person</th><th>Role</th><th>Timetable shown</th><th>Status</th><th>Last sign-in</th><th></th></tr>
+    ${rows.map(u => `<tr>
+      <td><div class="who"><span class="avatar">${esc(TT.initials(u.name))}</span>
+        <div><b>${esc(u.name)}</b><small>${esc(u.username)}</small></div></div></td>
+      <td><span class="tag ${u.role}">${TT.ROLE[u.role]}</span></td>
+      <td>${linkCell(u)}</td>
+      <td>${statusCell(u)}</td>
+      <td style="color:var(--muted);font-size:13px">${TT.dateTime(u.last_login)}</td>
+      <td class="act"><div class="more">
+        <button class="btn sm ghost" data-more="${u.id}" aria-label="Actions">•••</button>
+        <div class="menu" hidden data-menu="${u.id}">
+          <button data-act="edit" data-id="${u.id}">Edit</button>
+          <button data-act="reset" data-id="${u.id}">Reset password</button>
+          ${u.id === me.id ? "" : `<button data-act="toggle" data-id="${u.id}">${u.active ? "Disable sign-in" : "Enable sign-in"}</button>
+          <button data-act="delete" data-id="${u.id}" class="danger">Delete</button>`}
+        </div></div></td>
+    </tr>`).join("")}</table>`
+    : `<div class="empty"><b>${users.length ? "No one matches" : "No one here yet"}</b>
+        <p>${users.length ? "Try a different search." : "Add teachers in one click from the live timetable, or import students from a spreadsheet."}</p></div>`;
+}
+
+async function load() {
+  const [u, l] = await Promise.all([api("/api/users"), api("/api/publications/linkables")]);
+  users = u.users; links = l;
+  $("nolive").hidden = links.live;
+  draw();
+}
+
+/* ------------------------------------------------------- credentials */
+function showCredentials(created, failed = []) {
+  const rows = created.map(c => ({name: c.user.name, username: c.user.username, role: c.user.role,
+    password: c.password, timetable: c.user.role === "teacher" ? staffName(c.user.staff_id) : groupName(c.user.group_id) || ""}));
+  return TT.dialog({
+    title: created.length === 1 ? "Account created" : `${created.length} accounts created`,
+    text: "These temporary passwords are shown once. Hand them out now or download the list — each person sets their own password the first time they sign in.",
+    wide: rows.length > 1,
+    body: `${rows.length === 1 ? `<p style="margin-bottom:8px"><b>${esc(rows[0].name)}</b> signs in as <b>${esc(rows[0].username)}</b> with:</p>
+        <div class="secret"><span>${esc(rows[0].password)}</span><button type="button" class="btn sm" data-copy="${esc(rows[0].password)}">Copy</button></div>`
+      : rows.length ? `<div class="scroll-x" style="max-height:340px"><table class="t credtable">
+        <tr><th>Name</th><th>Login</th><th>Temporary password</th></tr>
+        ${rows.map(r => `<tr><td>${esc(r.name)}</td><td>${esc(r.username)}</td><td>${esc(r.password)}</td></tr>`).join("")}</table></div>` : ""}
+      ${failed.length ? `<div class="note warn" style="margin-top:14px"><span>⚠</span><span><b>${failed.length} row(s) skipped</b>
+        <ul>${failed.slice(0, 12).map(f => `<li>${esc(f.username || "row " + f.row)}: ${esc(f.error)}</li>`).join("")}</ul></span></div>` : ""}`,
+    onOpen: (d) => d.querySelectorAll("[data-copy]").forEach(b => b.onclick = () => {
+      navigator.clipboard?.writeText(b.dataset.copy).then(() => TT.toast("Copied."));
+    }),
+    actions: [
+      ...(rows.length ? [{label: "Download list (CSV)", run: () => {
+        TT.download(`logins-${new Date().toISOString().slice(0, 10)}.csv`,
+          TT.csvText(rows, ["name", "username", "password", "role", "timetable"]));
+        return TT.KEEP;
+      }}] : []),
+      {label: "Done", kind: "primary", value: true},
+    ],
+  });
+}
+
+/* ------------------------------------------------------- add / edit */
+function personForm(u = {}) {
+  const role = u.role || (tab === "admin" ? "admin" : tab === "student" ? "student" : "teacher");
+  const opts = (list, sel) => `<option value="">— choose —</option>` + list.map(x =>
+    `<option value="${esc(x.id)}" ${x.id === sel ? "selected" : ""}>${esc(x.name)}</option>`).join("");
+  return `<label class="field"><span>Role</span><select class="input" name="role">
+      ${["teacher", "student", "admin"].map(r => `<option value="${r}" ${r === role ? "selected" : ""}>${TT.ROLE[r]}</option>`).join("")}</select></label>
+    <label class="field" data-for="teacher"><span>Teacher in the timetable</span>
+      <select class="input" name="staff_id">${opts(links.staff, u.staff_id)}</select>
+      <small>Their login shows this teacher's week.</small></label>
+    <label class="field" data-for="student"><span>Class</span>
+      <select class="input" name="group_id">${opts(links.groups, u.group_id)}</select>
+      <small>Their login shows this class's week.</small></label>
+    <label class="field"><span>Name</span><input class="input" name="name" value="${esc(u.name || "")}" required></label>
+    ${u.id ? "" : `<label class="field"><span id="ulbl">Login</span><input class="input" name="username" autocapitalize="none" spellcheck="false" required>
+      <small>Students: their roll number. Teachers: something like <b>janani.k</b>.</small></label>`}`;
+}
+
+function wireForm(d, isNew) {
+  const f = d.querySelector("form");
+  const sync = () => d.querySelectorAll("[data-for]").forEach(el => el.hidden = el.dataset.for !== f.role.value);
+  f.role.onchange = sync; sync();
+  if (isNew) {
+    let touched = false;
+    f.username.oninput = () => { touched = true; };
+    f.staff_id.onchange = () => {
+      const s = links.staff.find(x => x.id === f.staff_id.value);
+      if (s && !f.name.value) f.name.value = s.name;
+      if (s && !touched) f.username.value = usernameFrom(s.name);
+    };
+  }
+}
+
+async function addPerson() {
+  const created = await TT.dialog({
+    title: "Add a person", text: "They get a temporary password to change on first sign-in.",
+    body: personForm(), onOpen: (d) => wireForm(d, true),
+    actions: [{label: "Cancel"}, {label: "Create login", kind: "primary", run: async (d) => {
+      const f = d.querySelector("form");
+      const body = {role: f.role.value, name: f.name.value, username: f.username.value,
+        staff_id: f.staff_id.value || null, group_id: f.group_id.value || null};
+      return api("/api/users", {method: "POST", body});
+    }}],
+  });
+  if (created) { await load(); await showCredentials([created]); }
+}
+
+async function editPerson(u) {
+  const saved = await TT.dialog({
+    title: `Edit ${u.name}`, body: personForm(u), onOpen: (d) => wireForm(d, false),
+    actions: [{label: "Cancel"}, {label: "Save", kind: "primary", run: async (d) => {
+      const f = d.querySelector("form");
+      return api(`/api/users/${u.id}`, {method: "PATCH", body: {role: f.role.value, name: f.name.value,
+        staff_id: f.staff_id.value || null, group_id: f.group_id.value || null}});
+    }}],
+  });
+  if (saved) { TT.toast("Saved."); load(); }
+}
+
+async function addAllTeachers() {
+  if (!links.live) return TT.toast("Publish a timetable first — teacher logins link to it.", true);
+  const linked = new Set(users.filter(u => u.role === "teacher").map(u => u.staff_id));
+  const taken = new Set(users.map(u => u.username));
+  const rows = links.staff.filter(s => !linked.has(s.id)).map(s => {
+    let base = usernameFrom(s.name), name = base, n = 2;
+    while (taken.has(name)) name = `${base}${n++}`;
+    taken.add(name);
+    return {role: "teacher", name: s.name, username: name, staff_id: s.id};
+  });
+  if (!rows.length) return TT.toast("Every teacher in the live timetable already has a login.");
+  const ok = await TT.dialog({title: `Create ${rows.length} teacher login${rows.length === 1 ? "" : "s"}?`,
+    text: "One for each teacher in the live timetable who doesn't have one yet.",
+    body: `<div class="scroll-x" style="max-height:300px"><table class="t"><tr><th>Teacher</th><th>Login</th></tr>
+      ${rows.map(r => `<tr><td>${esc(r.name)}</td><td style="font-family:var(--mono);font-size:13px">${esc(r.username)}</td></tr>`).join("")}</table></div>`,
+    actions: [{label: "Cancel"}, {label: "Create logins", kind: "primary", value: true}]});
+  if (!ok) return;
+  const res = await bulk(rows);
+  await load();
+  showCredentials(res.created, res.failed);
+}
+
+/* Big lists go up in chunks so each request stays short and the page can
+   say how far along it is. */
+async function bulk(rows) {
+  const out = {created: [], failed: []}, CHUNK = 200;
+  const box = document.createElement("dialog");
+  box.className = "dlg";
+  box.innerHTML = `<div class="loading" style="padding:34px"><span class="spinner"></span><span data-p>Creating logins…</span></div>`;
+  document.body.append(box); box.showModal();
+  box.addEventListener("cancel", (e) => e.preventDefault());
+  try {
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      box.querySelector("[data-p]").textContent = `Creating logins… ${i} of ${rows.length}`;
+      const res = await api("/api/users/bulk", {method: "POST", body: {rows: rows.slice(i, i + CHUNK)}});
+      out.created.push(...res.created);
+      out.failed.push(...res.failed.map(f => ({...f, row: f.row + i})));
+    }
+  } finally { box.close(); box.remove(); }
+  return out;
+}
+
+async function importStudents(text) {
+  const rows = TT.parseCSV(text);
+  if (!rows.length) return TT.toast("That file has no rows.", true);
+  const pick = (r, ...keys) => keys.map(k => r[k]).find(v => v) || "";
+  const byName = new Map(links.groups.flatMap(g => [[g.id.toLowerCase(), g.id], [g.name.toLowerCase(), g.id]]));
+  const out = [], bad = [];
+  rows.forEach((r, i) => {
+    const username = pick(r, "roll_no", "roll_number", "rollno", "roll", "username", "login");
+    const cls = pick(r, "class", "class_id", "group", "group_id", "section");
+    const gid = byName.get(cls.toLowerCase());
+    if (!username) return bad.push({row: i + 2, error: "no roll number"});
+    if (!gid) return bad.push({row: i + 2, username, error: `no class called “${cls}” in the live timetable`});
+    out.push({role: "student", username, name: pick(r, "name", "student_name", "full_name") || username, group_id: gid});
+  });
+  if (!out.length) return showCredentials([], bad);
+  const res = await bulk(out);
+  await load();
+  showCredentials(res.created, [...bad, ...res.failed]);
+}
+
+function importHelp() {
+  if (!links.live) return TT.toast("Publish a timetable first — student logins link to its classes.", true);
+  TT.dialog({title: "Import students",
+    text: "A CSV with one row per student. The first row names the columns.",
+    body: `<table class="t" style="font-size:13px"><tr><th>roll_no</th><th>name</th><th>class</th></tr>
+      <tr><td>23pw01</td><td>Aarav S</td><td>${esc(links.groups[0]?.name || "")}</td></tr>
+      <tr><td>23pw02</td><td>Bhavya R</td><td>${esc(links.groups[0]?.id || "")}</td></tr></table>
+      <p style="color:var(--muted);font-size:13px;margin-top:12px"><b>class</b> may be the class name or its id. Classes in the live timetable:
+      ${links.groups.map(g => `<b>${esc(g.id)}</b>`).join(", ")}.</p>`,
+    actions: [{label: "Download template", run: () => {
+        TT.download("students-template.csv", TT.csvText([{roll_no: "23pw01", name: "Student Name", class: links.groups[0]?.id || ""}], ["roll_no", "name", "class"]));
+        return TT.KEEP; }},
+      {label: "Choose CSV…", kind: "primary", run: () => { $("file").click(); return true; }}]});
+}
+
+$("file").onchange = async (ev) => {
+  const f = ev.target.files[0]; ev.target.value = "";
+  if (f) { try { await importStudents(await f.text()); } catch (e) { TT.toast(e.message, true); } }
+};
+
+document.addEventListener("click", async (ev) => {
+  const t = ev.target.closest("button");
+  document.querySelectorAll("[data-menu]").forEach(m => { if (!t || m.dataset.menu !== t.dataset.more) m.hidden = true; });
+  if (!t) return;
+  try {
+    if (t.dataset.tab) { tab = t.dataset.tab; return draw(); }
+    if (t.dataset.more) { ev.stopPropagation(); const m = document.querySelector(`[data-menu="${t.dataset.more}"]`); m.hidden = !m.hidden; return; }
+    if (t.id === "add") return addPerson();
+    if (t.id === "allteachers") return addAllTeachers();
+    if (t.id === "importst") return importHelp();
+    const u = users.find(x => x.id === +t.dataset.id);
+    if (!u) return;
+    if (t.dataset.act === "edit") return editPerson(u);
+    if (t.dataset.act === "reset") {
+      const ok = await TT.dialog({title: `Reset ${u.name}'s password?`,
+        text: "They're signed out everywhere and get a new temporary password.",
+        actions: [{label: "Cancel"}, {label: "Reset", kind: "primary", value: true}]});
+      if (!ok) return;
+      const {password} = await api(`/api/users/${u.id}/reset`, {method: "POST"});
+      await load();
+      return showCredentials([{user: u, password}]);
+    }
+    if (t.dataset.act === "toggle") {
+      await api(`/api/users/${u.id}`, {method: "PATCH", body: {active: !u.active}});
+      TT.toast(u.active ? `${u.name} can no longer sign in.` : `${u.name} can sign in again.`);
+      return load();
+    }
+    if (t.dataset.act === "delete") {
+      const ok = await TT.dialog({title: `Delete ${u.name}?`, text: "Their login stops working. This cannot be undone.",
+        actions: [{label: "Cancel"}, {label: "Delete", kind: "primary danger", value: true}]});
+      if (!ok) return;
+      await api(`/api/users/${u.id}`, {method: "DELETE"});
+      TT.toast("Deleted.");
+      return load();
+    }
+  } catch (e) { TT.toast(e.message, true); }
+});
+$("q").oninput = draw;
+
+TT.boot("people", ["admin"]).then(st => { me = st.user; return load(); }).catch(() => {});
+</script>
+</body>
+</html>

@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My timetable</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+.hello{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:22px}
+.hello h1{font-size:26px;letter-spacing:-.025em}
+.hello p{color:var(--muted);margin-top:3px}
+.pubchip{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);
+  background:var(--card);border:1px solid var(--line);border-radius:999px;padding:6px 12px}
+.pubchip .dot{color:var(--green)}
+
+.preview{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 14px;margin-bottom:20px;
+  border-radius:12px;background:var(--brand-soft);color:var(--brand-ink);font-size:14px}
+.preview select{width:auto;min-width:200px;padding:7px 34px 7px 10px}
+
+.top{display:grid;grid-template-columns:minmax(0,380px) minmax(0,1fr);gap:18px;margin-bottom:18px}
+@media (max-width:900px){.top{grid-template-columns:1fr}}
+
+/* -------------------------------------------- today */
+.day-h{display:flex;align-items:baseline;gap:8px}
+.day-h small{color:var(--muted);font-size:13px;font-weight:500}
+.slots{list-style:none;margin:0;padding:6px 0}
+.slot{display:grid;grid-template-columns:92px 1fr;gap:12px;padding:10px 20px;position:relative}
+.slot .tm{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;line-height:1.35;padding-top:2px}
+.slot .tm b{display:block;color:var(--ink);font-size:13.5px}
+.slot .what{border-left:3px solid var(--c-line,var(--line));background:var(--c-bg,var(--free));
+  border-radius:0 10px 10px 0;padding:8px 12px;min-width:0}
+.slot .what b{display:block;font-size:14px;color:var(--c-ink,var(--ink))}
+.slot .what span{display:block;font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+.slot.free .what{background:none;border-left-style:dashed;color:var(--faint)}
+.slot.free .what b{color:var(--faint);font-weight:500}
+.slot.now::before{content:"";position:absolute;left:8px;top:16px;width:6px;height:6px;border-radius:50%;background:var(--green);
+  box-shadow:0 0 0 4px var(--green-soft)}
+.slot .badge{float:right;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--green)}
+.brkline{display:flex;align-items:center;gap:10px;padding:2px 20px 2px 124px;font-size:11.5px;color:var(--faint);
+  text-transform:uppercase;letter-spacing:.06em}
+.brkline::after{content:"";flex:1;border-top:1px dashed var(--line)}
+
+/* -------------------------------------------- subjects */
+.subj{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.sj{border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;gap:12px;align-items:flex-start;background:var(--card)}
+.sj .sw{width:10px;align-self:stretch;border-radius:6px;background:var(--c-line);flex:none}
+.sj b{display:block;font-size:14px;line-height:1.3}
+.sj .code{font-size:12px;font-weight:700;color:var(--c-ink)}
+.sj span{display:block;font-size:12.5px;color:var(--muted)}
+.sj .hrs{margin-left:auto;text-align:right;font-variant-numeric:tabular-nums;flex:none}
+.sj .hrs b{font-size:16px}
+
+/* -------------------------------------------- the week */
+table.wk{border-collapse:separate;border-spacing:0;width:100%;min-width:860px;table-layout:fixed;font-size:12.5px}
+table.wk th{font-size:11.5px;font-weight:650;color:var(--muted);padding:10px 6px;background:var(--free);
+  border-bottom:1px solid var(--line);text-align:center;white-space:nowrap}
+table.wk th small{display:block;font-weight:500;color:var(--faint)}
+table.wk th.dh,table.wk td.dh{width:64px;text-align:left;padding-left:16px}
+table.wk td{border-bottom:1px solid var(--line);padding:5px;vertical-align:top;height:74px}
+table.wk tr:last-child td{border-bottom:0}
+table.wk td.dh{font-weight:700;font-size:13px;vertical-align:middle;background:var(--free)}
+table.wk tr.today td.dh{color:var(--brand)}
+table.wk tr.today td{background:#fafaff}
+table.wk tr.today td.dh{background:var(--brand-soft)}
+table.wk .brk{border-left:2px solid var(--line)}
+.blk{height:100%;border-radius:9px;padding:7px 8px;background:var(--c-bg);border:1px solid var(--c-line);
+  color:var(--c-ink);overflow:hidden;display:flex;flex-direction:column;gap:1px}
+.blk b{font-size:12.5px}
+.blk span{color:var(--muted);font-size:11.5px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.blk + .blk{margin-top:4px}
+.blk.lab b::after{content:"LAB";font-size:9.5px;font-weight:700;letter-spacing:.05em;margin-left:6px;
+  padding:1px 5px;border-radius:5px;background:rgba(255,255,255,.7)}
+.fr{height:100%;border-radius:9px;border:1px dashed var(--line)}
+
+.printhead{display:none}
+@media print{
+  @page{size:A4 landscape;margin:10mm}
+  .hello,.preview,.todaycard,.statsrow{display:none!important}
+  .top{display:block}
+  .printhead{display:block;margin-bottom:10px}
+  .printhead h1{font-size:18px}
+  .printhead p{font-size:12px;color:#555}
+  table.wk{min-width:0;font-size:10.5px}
+  table.wk td{height:58px}
+  .card{border-color:#ccc;break-inside:avoid}
+  .scroll-x{overflow:visible}
+  .subj{grid-template-columns:repeat(3,1fr)}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+<main class="page" id="main"><div class="loading"><span class="spinner"></span>Loading your timetable…</div></main>
+
+<script src="/static/app.js"></script>
+<script>
+"use strict";
+const {$, esc} = TT;
+const JS_DAYS = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
+const DAY_NAME = {MON:"Monday",TUE:"Tuesday",WED:"Wednesday",THU:"Thursday",FRI:"Friday",SAT:"Saturday",SUN:"Sunday"};
+let status, D;
+
+const cvars = (code) => { const c = TT.colour(code); return `--c-bg:${c.bg};--c-line:${c.line};--c-ink:${c.ink}`; };
+const toMin = (t) => { const [h, m] = String(t).split(":").map(Number); return h * 60 + m; };
+const isStaff = () => D.scope.kind === "staff";
+const gname = (gid) => D.scope.group_names[gid] || gid;
+const short = (names) => names.join(", ");
+
+/* All the meetings at one (day, period), as display lines. */
+function slotItems(day, pid) {
+  const here = D.meetings.filter(m => m.day === day && m.period === pid);
+  const byCourse = new Map();
+  for (const m of here) {
+    const k = m.group + "|" + m.course;
+    if (!byCourse.has(k)) byCourse.set(k, []);
+    byCourse.get(k).push(m);
+  }
+  return [...byCourse.values()].map(ms => {
+    const m = ms[0];
+    ms.sort((a, b) => a.batch - b.batch);
+    let lines;
+    if (isStaff()) {
+      const batch = m.batches > 1 ? ` · batch ${ms.map(x => x.batch).join(", ")}` : "";
+      lines = [gname(m.group) + batch, ms.map(x => x.room).join(", ")];
+    } else if (m.batches > 1) {
+      lines = ms.map(x => `B${x.batch} · ${x.room} · ${short(x.staff)}`);
+    } else {
+      lines = [m.room, short(m.staff)];
+    }
+    return {code: m.course, title: m.title, kind: m.kind, lines,
+            sig: ms.map(x => `${x.group}|${x.course}|${x.batch}|${x.room}`).join(";")};
+  });
+}
+
+/* Runs of identical consecutive slots (a lab's two periods, or free time)
+   become one block, but never across a break. */
+function runs(day) {
+  const ps = D.grid.periods, out = [];
+  for (let i = 0; i < ps.length; i++) {
+    const items = slotItems(day, ps[i].id);
+    const sig = items.map(x => x.sig).join("/");
+    const prev = out[out.length - 1];
+    if (prev && prev.sig === sig && !D.grid.breaks.includes(ps[i].id)) {
+      prev.to = i; continue;
+    }
+    out.push({from: i, to: i, items, sig});
+  }
+  return out;
+}
+
+function shownDay() {
+  const days = D.grid.days, today = JS_DAYS[new Date().getDay()];
+  if (days.includes(today)) return {day: today, today: true};
+  for (let k = 1; k <= 7; k++) {
+    const d = JS_DAYS[(new Date().getDay() + k) % 7];
+    if (days.includes(d)) return {day: d, today: false};
+  }
+  return {day: days[0], today: false};
+}
+
+function todayCard() {
+  const {day, today} = shownDay();
+  const ps = D.grid.periods;
+  const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+  let html = "", nextMarked = false, any = false;
+  for (const r of runs(day)) {
+    const a = ps[r.from], b = ps[r.to];
+    if (D.grid.breaks.includes(a.id) && r.from > 0) html += `<li class="brkline">break</li>`;
+    const live = today && nowMin >= toMin(a.start) && nowMin < toMin(b.end);
+    const upcoming = today && !nextMarked && nowMin < toMin(a.start) && r.items.length;
+    if (upcoming) nextMarked = true;
+    const label = r.from === r.to ? `P${a.id}` : `P${a.id}–${b.id}`;
+    const tm = `<div class="tm"><b>${esc(a.start)}–${esc(b.end)}</b>${label}</div>`;
+    if (!r.items.length) {
+      html += `<li class="slot free">${tm}<div class="what"><b>Free</b></div></li>`;
+      continue;
+    }
+    any = true;
+    for (const it of r.items) {
+      html += `<li class="slot ${live ? "now" : ""}" style="${cvars(it.code)}">${tm}
+        <div class="what">${live ? `<span class="badge">Now</span>` : upcoming ? `<span class="badge" style="color:var(--brand)">Next</span>` : ""}
+          <b>${esc(it.title)}</b><span>${esc(it.code)}${it.kind === "lab" ? " · Lab" : ""}</span>
+          ${it.lines.map(l => `<span>${esc(l)}</span>`).join("")}</div></li>`;
+    }
+  }
+  return `<div class="card todaycard">
+    <div class="ch"><div class="day-h"><h2>${today ? "Today" : "Next teaching day"}</h2>
+      <small>${DAY_NAME[day] || day}</small></div></div>
+    ${any ? `<ul class="slots">${html}</ul>`
+      : `<div class="empty"><b>Nothing scheduled</b><p>No periods for you on ${DAY_NAME[day] || day}.</p></div>`}
+  </div>`;
+}
+
+function subjects() {
+  const agg = new Map();
+  for (const m of D.meetings) {
+    const k = isStaff() ? `${m.group}|${m.course}` : m.course;
+    if (!agg.has(k)) agg.set(k, {m, slots: new Set(), staff: new Set(), rooms: new Set()});
+    const a = agg.get(k);
+    a.slots.add(m.day + m.period);
+    m.staff.forEach(s => a.staff.add(s));
+    a.rooms.add(m.room);
+  }
+  const rows = [...agg.values()].sort((x, y) => y.slots.size - x.slots.size);
+  return rows.map(({m, slots, staff, rooms}) => `<div class="sj" style="${cvars(m.course)}">
+      <span class="sw"></span>
+      <div style="min-width:0"><span class="code">${esc(m.course)}${m.kind === "lab" ? " · Lab" : ""}</span>
+        <b>${esc(m.title)}</b>
+        <span>${esc(isStaff() ? gname(m.group) : [...staff].join(", "))}</span>
+        <span>${esc([...rooms].join(", "))}</span></div>
+      <div class="hrs"><b>${slots.size}</b><span>per week</span></div>
+    </div>`).join("");
+}
+
+function week() {
+  const g = D.grid, today = shownDay();
+  const head = `<tr><th class="dh"></th>${g.periods.map(p =>
+    `<th class="${g.breaks.includes(p.id) ? "brk" : ""}">P${p.id}<small>${esc(p.start)}–${esc(p.end)}</small></th>`).join("")}</tr>`;
+  const body = g.days.map(day => {
+    const cells = runs(day).map(r => {
+      const p = g.periods[r.from];
+      const brk = g.breaks.includes(p.id) ? "brk" : "";
+      const span = r.to - r.from + 1;
+      const inner = r.items.length ? r.items.map(it =>
+        `<div class="blk ${it.kind === "lab" ? "lab" : ""}" style="${cvars(it.code)}" title="${esc(it.title)}">
+          <b>${esc(it.code)}</b>${it.lines.map(l => `<span>${esc(l)}</span>`).join("")}</div>`).join("")
+        : `<div class="fr"></div>`;
+      return `<td class="${brk}" ${span > 1 ? `colspan="${span}"` : ""}>${inner}</td>`;
+    }).join("");
+    return `<tr class="${today.today && today.day === day ? "today" : ""}"><td class="dh">${day}</td>${cells}</tr>`;
+  }).join("");
+  return `<table class="wk">${head}${body}</table>`;
+}
+
+function stats() {
+  const s = D.scope, n = s.periods;
+  const labs = new Set(D.meetings.filter(m => m.kind === "lab").map(m => m.group + m.course + m.day)).size;
+  const total = D.grid.days.length * D.grid.periods.length;
+  const tiles = isStaff()
+    ? [[n, "periods a week"], [new Set(D.meetings.map(m => m.group)).size, "classes"],
+       [new Set(D.meetings.map(m => m.group + m.course)).size, "subjects"], [labs, "lab sessions"]]
+    : [[n, "periods a week"], [new Set(D.meetings.map(m => m.course)).size, "subjects"],
+       [labs, "lab sessions"], [total - n, "free periods"]];
+  return `<div class="stats statsrow" style="margin-bottom:14px">${tiles.map(([v, l]) =>
+    `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join("")}</div>`;
+}
+
+function previewBar() {
+  if (!D.choices) return "";
+  const s = D.scope || {};
+  const opt = (list, kind) => list.map(x =>
+    `<option value="${kind}:${esc(x.id)}" ${s.kind === kind && s.id === x.id ? "selected" : ""}>${esc(x.name)}</option>`).join("");
+  return `<div class="preview noprint"><b>Preview</b> — see exactly what a student or teacher sees:
+    <select class="input" id="pick">
+      <optgroup label="Classes">${opt(D.choices.groups, "group")}</optgroup>
+      <optgroup label="Teachers">${opt(D.choices.staff, "staff")}</optgroup>
+    </select></div>`;
+}
+
+function emptyPage(title, text, extra = "") {
+  $("main").innerHTML = `<div class="card"><div class="empty">
+    <div class="ico"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></div>
+    <b>${esc(title)}</b><p>${text}</p>${extra}</div></div>`;
+}
+
+function render() {
+  const u = status.user, pub = D.publication;
+  if (!pub) return emptyPage("No timetable published yet",
+    u.role === "admin" ? "Generate one under <b>Build</b>, then press <b>Publish</b>. It shows up here the moment you do."
+      : "The timetable office hasn't published this term's timetable yet. Check back soon.",
+    u.role === "admin" ? `<div style="margin-top:18px"><a class="btn primary" href="/admin">Go to Build</a></div>` : "");
+  if (!D.scope) {
+    const what = u.role === "student" ? "a class" : "a teacher";
+    emptyPage("Your account isn't linked yet",
+      `Your login works, but it isn't linked to ${what} in the timetable that's live now (${esc(pub.title)}). Ask the timetable office to link it.`);
+    if (D.choices) $("main").insertAdjacentHTML("afterbegin", previewBar());
+    return;
+  }
+  const s = D.scope;
+  const hour = new Date().getHours();
+  const greet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  const heading = u.role === "admin" ? s.name : `${greet}, ${TT.firstName(u.name)}`;
+  const sub = s.kind === "group"
+    ? [u.role === "admin" ? "Class timetable" : s.name, s.strength ? `${s.strength} students` : "",
+       s.home_room ? `Home room ${s.home_room}` : ""].filter(Boolean).join(" · ")
+    : [u.role === "admin" ? "Teacher timetable" : "Your teaching week", `${s.periods} periods`].join(" · ");
+  document.title = `${s.name} · Timetable`;
+  $("main").innerHTML = `
+    ${previewBar()}
+    <div class="hello">
+      <div><h1>${esc(heading)}</h1><p>${esc(sub)}</p></div>
+      <div class="tb-sp"></div>
+      <span class="pubchip" title="${esc(pub.note || "")}"><span class="dot"></span>${esc(pub.title)} · published ${TT.date(pub.published_at)}</span>
+      <button class="btn noprint" onclick="print()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7"/></svg>Print</button>
+    </div>
+    <div class="printhead"><h1>${esc(s.name)} — ${esc(pub.title)}</h1>
+      <p>${esc(status.org)} · published ${TT.date(pub.published_at)} · printed ${new Date().toLocaleDateString()}</p></div>
+    <div class="top">
+      ${todayCard()}
+      <div>${stats()}
+        <div class="card"><div class="ch"><h2>${u.role === "admin" ? (isStaff() ? "Teaches" : "Subjects") : isStaff() ? "What you teach" : "Your subjects"}</h2></div>
+          <div class="cb">${D.meetings.length ? `<div class="subj">${subjects()}</div>` : `<p style="color:var(--muted)">Nothing scheduled.</p>`}</div></div>
+      </div>
+    </div>
+    <div class="card"><div class="ch"><h2>The week</h2><p>${D.grid.days.length} days · ${D.grid.periods.length} periods a day</p></div>
+      <div class="scroll-x">${week()}</div></div>
+    ${pub.note ? `<p style="color:var(--muted);font-size:13px;margin-top:14px">Note from the timetable office: ${esc(pub.note)}</p>` : ""}`;
+}
+
+async function load() {
+  const q = new URLSearchParams(location.search);
+  const qs = q.get("staff") ? `?staff=${encodeURIComponent(q.get("staff"))}`
+    : q.get("group") ? `?group=${encodeURIComponent(q.get("group"))}` : "";
+  try {
+    D = await TT.api("/api/portal" + qs);
+    render();
+  } catch (e) {
+    emptyPage("Couldn't load the timetable", esc(e.message));
+  }
+}
+
+document.addEventListener("change", (ev) => {
+  if (ev.target.id !== "pick") return;
+  const [kind, id] = ev.target.value.split(/:(.*)/s);
+  history.replaceState(null, "", `/my?${kind}=${encodeURIComponent(id)}`);
+  load();
+});
+
+(async () => {
+  status = await TT.boot("my");
+  await load();
+  // keep "Now" honest if the page is left open all day
+  setInterval(() => { if (D && D.scope && !document.hidden) render(); }, 60_000);
+})();
+</script>
+</body>
+</html>

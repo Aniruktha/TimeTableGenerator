@@ -3,38 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Timetable Maker</title>
+<title>Build · Timetable</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
 <style>
-/* Deliberately a single light theme. The people using this are looking at a
-   printed-timetable-shaped thing; a dark UI fights that. */
-:root{
-  --bg:#f6f4f1; --card:#fff; --ink:#332f2b; --muted:#847b72; --line:#e8e2db;
-  --brand:#5b57d1; --brand-soft:#eeedfd; --brand-ink:#403cae;
-  --green:#0f7a52; --green-soft:#e7f6ef;
-  --amber:#a86a12; --amber-soft:#fdf3e3;
-  --red:#c0392b; --red-soft:#fceeec;
-  --lab:#e9f2ff; --activity:#fff5e0; --free:#faf9f7;
-  --shadow:0 1px 2px rgba(40,30,20,.05), 0 6px 18px rgba(40,30,20,.05);
-  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  --r:14px;
-}
-*{box-sizing:border-box}
-html{color-scheme:light}
-body{margin:0;background:var(--bg);color:var(--ink);
-  font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+/* Colours, fonts and the top bar come from app.css; this page adds the
+   builder's own pieces. Deliberately light: it is printed-timetable-shaped. */
 h1,h2,h3{margin:0;font-weight:650;letter-spacing:-.015em}
 p{margin:0}
 button,input,select,textarea{font:inherit;color:inherit}
 
-.wrap{max-width:1080px;margin:0 auto;padding:0 20px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px}
+@media (max-width:760px){.wrap{padding:0 16px}}
 
-/* ---------------------------------------------------------------- header */
-header{background:var(--card);border-bottom:1px solid var(--line)}
-.hrow{display:flex;align-items:center;gap:14px;padding:16px 0}
-.logo{width:34px;height:34px;border-radius:10px;background:var(--brand);
-  display:grid;place-items:center;color:#fff;font-weight:700;flex:none}
-.htext h1{font-size:17px}
-.htext p{font-size:13px;color:var(--muted)}
+/* ---------------------------------------------------------- page heading */
+.hrow{display:flex;align-items:flex-end;gap:14px;padding:26px 0 16px;flex-wrap:wrap}
+.htext h1{font-size:26px;letter-spacing:-.025em}
+.htext p{font-size:14px;color:var(--muted);margin-top:3px}
 .spacer{flex:1}
 
 /* ----------------------------------------------------------------- steps */
@@ -235,10 +220,9 @@ table.tt td.sel{box-shadow:inset 0 0 0 3px var(--brand)!important}
 
 <header>
   <div class="wrap hrow">
-    <div class="logo">TT</div>
     <div class="htext">
-      <h1>Timetable Maker</h1>
-      <p>Build a clash-free weekly timetable</p>
+      <h1>Build a timetable</h1>
+      <p>Rooms, teachers, classes and subjects in — a clash-free week out. Publish it when it looks right.</p>
     </div>
     <div class="spacer"></div>
     <div class="btnrow">
@@ -266,6 +250,7 @@ table.tt td.sel{box-shadow:inset 0 0 0 3px var(--brand)!important}
   </div>
 </div>
 
+<script src="/static/app.js"></script>
 <script>
 "use strict";
 
@@ -1130,6 +1115,8 @@ function showResult() {
       <div class="spacer"></div>
       <button class="btn" id="back">&larr; Change my inputs</button>
       <button class="btn" id="again" title="A different timetable; locked periods still hold">Try a different one</button>
+      <button class="btn primary" id="publish" ${clean && !pending ? "" : "disabled"}
+        title="${clean ? (pending ? "Re-plan first: you have changes waiting" : "Show this to students and teachers") : "This timetable failed the independent check"}">Publish&hellip;</button>
     </div>
     ${pending ? `<div class="pendbar"><span>&#9998; You asked to move <b>${pending}</b>
       period${pending===1?"":"s"}. Re-planning keeps everything else where it is unless it has to move.</span>
@@ -1761,8 +1748,50 @@ async function loadSamples() {
   } catch { /* the page still works without examples */ }
 }
 
-render();
-loadSamples();
+/* ============================================================== publish */
+
+async function publishResult() {
+  const meta = await TT.dialog({
+    title: "Publish this timetable?",
+    text: "It becomes the live version: every student and teacher sees their part of it at their next sign-in. The previous version is kept and can be put back.",
+    body: `<label class="field"><span>Title</span>
+        <input class="input" name="title" value="${esc(S.name)}" maxlength="120" required>
+        <small>Shown to everyone, e.g. “Semester 2 · from 12 Jan”.</small></label>
+      <label class="field"><span>Note <span style="font-weight:400;color:var(--muted)">(optional)</span></span>
+        <input class="input" name="note" maxlength="500" placeholder="e.g. Lab B moved to Thursday from week 6"></label>`,
+    actions: [{label: "Cancel"}, {label: "Publish", kind: "primary", run: async (d) => {
+      const f = d.querySelector("form");
+      return TT.api("/api/publications", {method: "POST",
+        body: {result_id: result.id, title: f.title.value, note: f.note.value, setup: S}});
+    }}],
+  });
+  if (!meta) return;
+  // the setup now carries the timetable just published, so the next re-plan starts from it
+  try { await api("/api/saved", {instance: S, title: S.name}); } catch { /* publishing worked; saving is a bonus */ }
+  const go = await TT.dialog({title: "Published", text:
+    `“${meta.publication.title}” is live as version ${meta.publication.id}. Students and teachers can sign in and see it now.`,
+    actions: [{label: "Stay here"}, {label: "Add people", value: "/admin/people"},
+              {label: "See what people see", kind: "primary", value: "/my"}]});
+  if (go) location.href = go;
+}
+
+document.body.addEventListener("click", (ev) => {
+  if (ev.target.closest("#publish")) publishResult();
+});
+
+(async () => {
+  await TT.boot("build", ["admin"]);
+  const from = new URLSearchParams(location.search).get("from");
+  if (from) {
+    try {
+      const d = await TT.api(`/api/publications/${encodeURIComponent(from)}/setup`);
+      S = normalise(d.instance); step = 1;
+      toast(`Opened “${d.title}”. Generating stays close to the published timetable.`);
+    } catch (e) { toast("Could not open that version: " + e.message, true); }
+    history.replaceState(null, "", "/admin");
+  }
+  render();
+})();
 </script>
 </body>
 </html>

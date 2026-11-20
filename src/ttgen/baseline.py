@@ -28,7 +28,7 @@ from typing import Any, Iterable
 import yaml
 
 from .data import Instance
-from .model import Meeting
+from .types import Meeting
 
 _TRUE = {"1", "y", "yes", "true", "locked", "x"}
 

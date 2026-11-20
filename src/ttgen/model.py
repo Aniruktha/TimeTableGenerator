@@ -17,44 +17,15 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ortools.sat.python import cp_model
 
 from .data import Course, Instance, Section
+from .types import Meeting, Solution
 
 if TYPE_CHECKING:
     from .baseline import Entry
-
-
-@dataclass(frozen=True)
-class Meeting:
-    """One scheduled section of one course in one period."""
-
-    group: str
-    course: str
-    title: str
-    kind: str
-    day: str
-    period: int
-    section: int
-    staff: tuple[str, ...]
-    room: str
-
-
-@dataclass
-class Solution:
-    status: str
-    meetings: list[Meeting] = field(default_factory=list)
-    objective: int | None = None
-    best_bound: int | None = None
-    wall_time: float = 0.0
-    penalties: dict[str, int] = field(default_factory=dict)
-
-    @property
-    def ok(self) -> bool:
-        return self.status in ("OPTIMAL", "FEASIBLE")
 
 
 class TimetableModel:

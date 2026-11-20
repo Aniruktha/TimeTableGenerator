@@ -277,7 +277,7 @@ def _room_list(raw: dict) -> tuple[str, ...]:
 
 
 def load(path: str | Path) -> Instance:
-    raw = yaml.safe_load(Path(path).read_text())
+    raw = yaml.safe_load(Path(path).read_text(encoding='utf-8'))
     return from_dict(raw)
 
 

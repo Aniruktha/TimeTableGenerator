@@ -35,7 +35,8 @@ from . import preflight, report, verify
 from .accounts import require_admin
 from .config import Weights
 from .data import Instance, InstanceError
-from .model import Solution, TimetableModel, explain
+from .model import TimetableModel, explain
+from .types import Solution
 
 STATIC = Path(__file__).parent / "static"
 
@@ -118,7 +119,7 @@ def get_sample(sample_id: str) -> str:
     # data/ so "../../etc/passwd" cannot be read.
     if not path.resolve().is_relative_to(data_dir().resolve()) or not path.is_file():
         raise HTTPException(404, f"no sample named {sample_id!r}")
-    return path.read_text()
+    return path.read_text(encoding='utf-8')
 
 
 # --------------------------------------------------------------------------- #
@@ -175,7 +176,7 @@ def get_saved(setup_id: str) -> str:
     path = _saved_path(setup_id)
     if not path.is_file():
         raise HTTPException(404, "that setup is no longer here")
-    return path.read_text()
+    return path.read_text(encoding='utf-8')
 
 
 @api.delete("/api/saved/{setup_id}")
@@ -290,7 +291,7 @@ def save_setup(body: SaveBody) -> dict[str, Any]:
     setup_id = _SLUG.sub("-", title.lower()).strip("-")[:60] or "setup"
     path = _saved_path(setup_id)
     existed = path.is_file()
-    path.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True, width=100))
+    path.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True, width=100), encoding='utf-8')
     return {"id": setup_id, "name": title, "replaced": existed}
 
 
@@ -546,7 +547,7 @@ def _render(result_id: str, suffix: str, writer) -> str:
             writer(inst, sol, path, locked=locked)
         else:
             writer(inst, sol, path)
-        return path.read_text()
+        return path.read_text(encoding='utf-8')
 
 
 @api.get("/api/result/{result_id}/timetable.csv")

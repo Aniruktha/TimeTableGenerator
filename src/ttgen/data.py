@@ -130,6 +130,21 @@ class Instance:
     courses: list[Course]
     weights: Weights = field(default_factory=Weights)
     blocked_slots: frozenset[tuple[str, int]] = frozenset()   # college-wide holds
+    # Which department this timetable is for.  Each department has its own
+    # live timetable; teachers and rooms shared with another department keep
+    # clear of the periods they already have there (see `elsewhere`).
+    department: str = ""
+    # Filled in at solve time from the other departments' live timetables:
+    # staff/room id -> {(day, period): elsewhere.Taken}.  Never read from a file.
+    taken_staff: dict[str, dict[tuple[str, int], Any]] = field(default_factory=dict)
+    taken_rooms: dict[str, dict[tuple[str, int], Any]] = field(default_factory=dict)
+
+    def closed_for_staff(self, staff_id: str) -> frozenset[tuple[str, int]]:
+        """Slots a teacher cannot teach here: their own unavailability plus
+        periods they already teach in another department."""
+        own = self.staff[staff_id].unavailable
+        taken = self.taken_staff.get(staff_id)
+        return own | frozenset(taken) if taken else own
 
     # -- derived views ----------------------------------------------------- #
 
@@ -385,6 +400,7 @@ def from_dict(raw: dict) -> Instance:
 
     inst = Instance(
         name=raw.get("name", "timetable"),
+        department=" ".join(str(raw.get("department") or "").split())[:60],
         grid=grid,
         rooms=rooms,
         staff=staff,

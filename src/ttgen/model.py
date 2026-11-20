@@ -251,6 +251,13 @@ class TimetableModel:
                     self._add(m.Add(self.x[c.uid, d, p] == 0), f"avail:{sid}",
                               f"{member.name} being unavailable at "
                               f"{_slots_text(self.grid, member.unavailable)}")
+                # H19: a teacher shared with another department is already
+                # teaching there in these periods.
+                taken = self.inst.taken_staff.get(sid, {})
+                for d, p in sorted(taken):
+                    self._add(m.Add(self.x[c.uid, d, p] == 0), f"taken:{sid}",
+                              f"{member.name} already teaching in "
+                              f"{_depts(taken)} at {_slots_text(self.grid, taken)}")
 
     # -- H4: no staff member is in two rooms at once ----------------------- #
 
@@ -277,10 +284,15 @@ class TimetableModel:
 
             member = self.inst.staff[sid]
             cap = member.max_periods_per_day
+            # Periods they already teach in other departments use up the
+            # same daily cap and the same runs as periods here.
+            away = set(self.inst.taken_staff.get(sid, {}))
             for d in self.grid.days:
+                there = sum(1 for p in self.grid.periods if (d, p) in away)
                 self._add(
-                    m.Add(sum(self.sbusy[sid, d, p] for p in self.grid.periods) <= cap),
-                    f"cap:{sid}", f"{member.name} teaching at most {cap} periods a day",
+                    m.Add(sum(self.sbusy[sid, d, p] for p in self.grid.periods) <= cap - there),
+                    f"cap:{sid}", f"{member.name} teaching at most {cap} periods a day"
+                    + (" (counting other departments)" if away else ""),
                 )
 
             # H17: no more than `max_consecutive` periods in an unbroken run.
@@ -289,8 +301,10 @@ class TimetableModel:
             if run and uids and run < len(ps):
                 for d in self.grid.days:
                     for i in range(len(ps) - run):
+                        window = ps[i : i + run + 1]
+                        there = sum(1 for q in window if (d, q) in away)
                         self._add(
-                            m.Add(sum(self.sbusy[sid, d, q] for q in ps[i : i + run + 1]) <= run),
+                            m.Add(sum(self.sbusy[sid, d, q] for q in window) <= run - there),
                             f"run:{sid}",
                             f"{member.name} teaching at most {run} periods in a row",
                         )
@@ -315,6 +329,14 @@ class TimetableModel:
                                     f"home:{c.group}",
                                     f"{grp.name} having every class in its home room {home}",
                                 )
+                # H19: a room shared with another department is in use there.
+                for r in rooms:
+                    taken = self.inst.taken_rooms.get(r, {})
+                    for d, p in sorted(taken):
+                        self._add(m.Add(self.y[c.uid, s.index, d, p, r] == 0),
+                                  f"takenroom:{r}",
+                                  f"room {r} already in use by {_depts(taken)} at "
+                                  f"{_slots_text(grid, taken)}")
                 for d, p in grid.slots():
                     picks = [self.y[c.uid, s.index, d, p, r] for r in rooms]
                     # Every parallel section needs its own room whenever the
@@ -604,6 +626,10 @@ def explain(inst: Instance, baseline=None, time_limit: float = 30.0) -> list[str
         return None
     core = solver.SufficientAssumptionsForInfeasibility()
     return sorted({lits[i] for i in core if i in lits})
+
+
+def _depts(taken) -> str:
+    return ", ".join(sorted({t.department for t in taken.values()}))
 
 
 def _slots_text(grid, slots) -> str:

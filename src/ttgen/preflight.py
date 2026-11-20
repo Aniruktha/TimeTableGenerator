@@ -78,15 +78,22 @@ def check(inst: Instance) -> list[str]:
         load = sum(c.hours for c, _ in inst.courses_of_staff(sid))
         if not load:
             continue
-        avail = [s for s in free_slots if s not in member.unavailable]
+        closed = inst.closed_for_staff(sid)
+        avail = [s for s in free_slots if s not in closed]
         if load > len(avail):
+            away = len(set(inst.taken_staff.get(sid, {})) & set(free_slots))
             problems.append(
                 f"{member.name}: assigned {load} periods but only {len(avail)} "
                 f"slots are available to them"
+                + (f" ({away} are taken by their teaching in other departments)" if away else "")
             )
         # Only days they can actually come in count towards the daily cap.
         days_in = len({d for d, _ in avail})
-        day_cap = member.max_periods_per_day * days_in
+        away = set(inst.taken_staff.get(sid, {}))
+        day_cap = sum(
+            max(0, member.max_periods_per_day - sum(1 for p in grid.periods if (d, p) in away))
+            for d in {d for d, _ in avail}
+        )
         if load > day_cap:
             problems.append(
                 f"{member.name}: assigned {load} periods but max_periods_per_day="
@@ -109,7 +116,7 @@ def check(inst: Instance) -> list[str]:
         dead = set(c.forbidden) | set(inst.blocked_slots)
         for s in c.sections:
             for sid in s.staff:
-                dead |= set(inst.staff[sid].unavailable)
+                dead |= set(inst.closed_for_staff(sid))
 
         if c.is_lab:
             usable_days = sum(
@@ -229,6 +236,13 @@ def check(inst: Instance) -> list[str]:
                         problems.append(
                             f"{c.uid} pinned to {slot[0]} P{slot[1]} but "
                             f"{inst.staff[sid].name} is unavailable then"
+                        )
+                    elif slot in inst.taken_staff.get(sid, {}):
+                        t = inst.taken_staff[sid][slot]
+                        problems.append(
+                            f"{c.uid} pinned to {slot[0]} P{slot[1]} but "
+                            f"{inst.staff[sid].name} is teaching {t.what} in "
+                            f"{t.department} then"
                         )
 
     return problems

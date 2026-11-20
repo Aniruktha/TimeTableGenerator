@@ -9,9 +9,10 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
+from . import baseline as baseline_mod
 from . import data as data_mod
 from . import preflight, report, verify
-from .model import TimetableModel
+from .model import TimetableModel, explain
 
 DEFAULT_DATA = "data/amcs_sem2.yaml"
 console = Console()
@@ -85,12 +86,65 @@ def cmd_workload(args) -> int:
     return 0
 
 
+def _load_baseline(inst, path: str | None):
+    if not path:
+        return None
+    try:
+        entries = baseline_mod.load(path)
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]cannot read baseline:[/red] {exc}")
+        raise SystemExit(2)
+    usable, dropped = baseline_mod.split(inst, entries)
+    n_locked = sum(e.locked for e in usable)
+    console.print(
+        f"[dim]baseline {path}: {len(usable)} meetings to stay close to, "
+        f"{n_locked} locked[/dim]"
+    )
+    for d in dropped:
+        console.print(f"  [yellow]skipped[/yellow] {d}")
+    problems = baseline_mod.lock_problems(inst, entries)
+    if problems:
+        console.print("[bold red]These locked periods cannot all hold:[/bold red]")
+        for p in problems:
+            console.print(f"  [red]x[/red] {p}")
+        raise SystemExit(1)
+    return entries
+
+
+def _print_changes(inst, entries, sol) -> None:
+    ch = baseline_mod.diff(inst, entries, sol.meetings)
+    moved = len(ch["removed"])
+    console.print(
+        f"\n[bold]Compared with the baseline:[/bold] {ch['kept']} of {ch['total']} "
+        f"class-periods kept, {moved} moved, {len(ch['room_changed'])} changed room"
+    )
+    if not (moved or ch["room_changed"]):
+        return
+    moves: dict[tuple[str, str], tuple[list[str], list[str]]] = {}
+    for side, rows in ((0, ch["removed"]), (1, ch["added"])):
+        for r in rows:
+            moves.setdefault((r["group"], r["course"]), ([], []))[side].append(
+                f"{r['day']} P{r['period']}"
+            )
+    for (g, code), (was, now) in moves.items():
+        console.print(
+            f"  {g:8} {code:8} {', '.join(was) or '-'}  ->  {', '.join(now) or '-'}"
+        )
+    for r in ch["room_changed"]:
+        console.print(f"  {r['group']:8} {r['course']:8} {r['day']} P{r['period']}: new room")
+    console.print(
+        f"  [dim]classes affected: {', '.join(ch['classes_affected']) or '-'}; "
+        f"staff to tell: {', '.join(ch['staff_affected']) or '-'}[/dim]"
+    )
+
+
 def cmd_solve(args) -> int:
     inst = _load(args.data)
     _preflight(inst)
+    entries = _load_baseline(inst, args.baseline)
 
     with console.status(f"building model for {inst.name}..."):
-        model = TimetableModel(inst)
+        model = TimetableModel(inst, baseline=entries)
     console.print(
         f"[dim]model: {len(model.x)} slot vars, {len(model.y)} room vars, "
         f"{len(model.blk)} lab-block vars[/dim]"
@@ -103,11 +157,19 @@ def cmd_solve(args) -> int:
     if not sol.ok:
         console.print(f"[bold red]{sol.status}[/bold red] after {sol.wall_time:.1f}s")
         if sol.status == "INFEASIBLE":
-            console.print(
-                "\nThe hard constraints contradict each other.  `tt workload` shows "
-                "who is overloaded; the usual culprit is a staff member's hours vs. "
-                "their available slots."
-            )
+            with console.status("working out which rules clash..."):
+                why = explain(inst, baseline=entries, time_limit=min(60.0, args.time))
+            if why:
+                console.print("\nNo timetable exists.  These rules cannot all hold "
+                              "together -- relax at least one:")
+                for w in why:
+                    console.print(f"  [red]x[/red] {w}")
+            else:
+                console.print(
+                    "\nThe hard constraints contradict each other.  `tt workload` shows "
+                    "who is overloaded; the usual culprit is a staff member's hours vs. "
+                    "their available slots, or too few rooms of one kind at once."
+                )
         else:
             console.print("\nNo solution found in the time limit -- try `--time 300`.")
         return 1
@@ -118,7 +180,7 @@ def cmd_solve(args) -> int:
         f"-- cost {sol.objective}, {proven}\n"
     )
 
-    problems = verify.verify(inst, sol)
+    problems = verify.verify(inst, sol, baseline=entries)
     if problems:
         console.print("[bold red]VERIFIER FOUND VIOLATIONS -- this is a bug:[/bold red]")
         for p in problems:
@@ -128,6 +190,8 @@ def cmd_solve(args) -> int:
 
     report.print_all(inst, sol, staff=args.staff, console=console)
     console.print(report.summary_table(inst, sol))
+    if entries:
+        _print_changes(inst, entries, sol)
 
     if args.rooms:
         console.print()
@@ -140,7 +204,8 @@ def cmd_solve(args) -> int:
 
     outdir = Path(args.out)
     outdir.mkdir(parents=True, exist_ok=True)
-    report.to_csv(inst, sol, outdir / "timetable.csv")
+    locked = {(e.group, e.course, e.day, e.period) for e in entries or [] if e.locked}
+    report.to_csv(inst, sol, outdir / "timetable.csv", locked=locked)
     report.to_html(inst, sol, outdir / "timetable.html")
     console.print(
         f"\n[dim]wrote {outdir / 'timetable.csv'} and {outdir / 'timetable.html'}[/dim]"
@@ -155,6 +220,17 @@ def cmd_web(args) -> int:
         console.print(f"[red]the web UI needs fastapi and uvicorn: {exc}[/red]")
         console.print("[dim]uv sync[/dim]")
         return 2
+    import socket
+
+    with socket.socket() as probe:
+        try:
+            probe.bind((args.host, args.port))
+        except OSError:
+            console.print(
+                f"[red]port {args.port} is already in use[/red] -- something else is "
+                f"running there.  Try [bold]tt web --port {args.port + 1}[/bold]."
+            )
+            return 2
     console.print(
         f"[bold]timetable generator[/bold] on [cyan]http://{args.host}:{args.port}[/cyan]"
         "  [dim]ctrl-c to stop[/dim]"
@@ -180,6 +256,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--rooms", action="store_true", help="also print lab occupancy")
     s.add_argument("--log", action="store_true", help="stream the CP-SAT search log")
     s.add_argument("--out", default="out", help="directory for csv/html exports")
+    s.add_argument(
+        "--baseline",
+        help="a published timetable (the CSV export) to stay close to; rows with "
+             "locked=yes are kept exactly",
+    )
 
     w = sub.add_parser("web", help="serve the browser UI")
     w.add_argument("--host", default="127.0.0.1", help="bind address")

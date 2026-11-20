@@ -58,6 +58,9 @@ class Staff:
     unavailable: frozenset[tuple[str, int]] = frozenset()
     max_periods_per_day: int = 6
     prefer_few_days: bool = False   # visiting faculty: cluster onto few days
+    # Longest unbroken run of teaching periods, counted in grid order (short
+    # breaks do not reset it).  0 means no limit.
+    max_consecutive: int = 0
 
 
 @dataclass(frozen=True)
@@ -67,6 +70,10 @@ class Group:
     id: str
     name: str
     strength: int = 40
+    # The class's own lecture hall.  Every whole-class theory and activity
+    # period is held here; only labs, electives and subjects with a fixed
+    # room of their own go elsewhere.
+    home_room: str | None = None
     # Free periods are a weekly quantity, never a daily one: the solver places
     # the class's teaching hours and every slot left over is free.  There is
     # deliberately no per-day minimum or maximum for a class.
@@ -86,6 +93,7 @@ class Section:
     room_kind: RoomKind = "classroom"
     needs: frozenset[str] = frozenset()
     seats: int = 0                  # 0 -> derived from group strength / n_sections
+    rooms: tuple[str, ...] = ()     # if set, the only rooms this section may use
 
 
 @dataclass(frozen=True)
@@ -155,13 +163,40 @@ class Instance:
         """Free periods a week: whatever the teaching does not fill."""
         return self.grid.n_slots - len(self.blocked_slots) - self.demand(group_id)
 
+    def home_room_of(self, course: Course, section: Section) -> str | None:
+        """The class's home room, if this section is bound to it.
+
+        Only a whole-class meeting sits in the home room.  A lab batch, an
+        elective (its students split across parallel rooms) or a subject that
+        names its own room is placed by its own rules.
+        """
+        grp = self.groups.get(course.group)
+        if (
+            grp is None
+            or not grp.home_room
+            or course.is_lab
+            or course.basket
+            or course.students
+            or section.rooms
+            or len(course.sections) > 1
+        ):
+            return None
+        room = self.rooms.get(grp.home_room)
+        if room is None or room.kind != section.room_kind:
+            return None
+        return grp.home_room
+
     def candidate_rooms(self, course: Course, section: Section) -> list[str]:
         seats = self.seats_for(course, section)
-        return [
-            r.id
-            for r in self.rooms.values()
-            if r.suits(section.room_kind, seats, section.needs)
-        ]
+        pool: Iterable[Room]
+        home = self.home_room_of(course, section)
+        if home:
+            pool = [self.rooms[home]]
+        elif section.rooms:
+            pool = [self.rooms[r] for r in section.rooms if r in self.rooms]
+        else:
+            pool = self.rooms.values()
+        return [r.id for r in pool if r.suits(section.room_kind, seats, section.needs)]
 
     def baskets(self, group_id: str) -> dict[str, list[Course]]:
         out: dict[str, list[Course]] = {}
@@ -229,6 +264,18 @@ def _slot_list(raw: Any, grid: Grid, where: str) -> frozenset[tuple[str, int]]:
     return frozenset(out)
 
 
+def _room_list(raw: dict) -> tuple[str, ...]:
+    """``room: M201`` or ``rooms: [J510, J511]`` -> a tuple of room ids."""
+    got = raw.get("rooms")
+    if got is None:
+        got = raw.get("room")
+    if not got:
+        return ()
+    if isinstance(got, str):
+        got = [got]
+    return tuple(str(r) for r in got)
+
+
 def load(path: str | Path) -> Instance:
     raw = yaml.safe_load(Path(path).read_text(encoding='utf-8'))
     return from_dict(raw)
@@ -270,6 +317,7 @@ def from_dict(raw: dict) -> Instance:
             unavailable=_slot_list(s.get("unavailable"), grid, f"staff {sid}"),
             max_periods_per_day=int(s.get("max_periods_per_day", 6)),
             prefer_few_days=bool(s.get("prefer_few_days", s.get("kind") == "visiting")),
+            max_consecutive=int(s.get("max_consecutive") or 0),
         )
         if sid in staff:
             raise InstanceError(f"duplicate staff id {sid!r}")
@@ -290,6 +338,7 @@ def from_dict(raw: dict) -> Instance:
             id=gr["id"],
             name=gr.get("name", gr["id"]),
             strength=int(gr.get("strength", 40)),
+            home_room=gr.get("home_room") or None,
         )
         if grp.id in groups:
             raise InstanceError(f"duplicate group id {grp.id!r}")
@@ -300,6 +349,9 @@ def from_dict(raw: dict) -> Instance:
         kind: CourseKind = c.get("kind", "theory")
         default_room = "lab" if kind == "lab" else "classroom"
         secs = c.get("sections") or [{}]
+        # `rooms` (or a single `room`) on the course applies to every section;
+        # a section may name its own instead.
+        course_rooms = _room_list(c)
         sections = tuple(
             Section(
                 index=i,
@@ -307,6 +359,7 @@ def from_dict(raw: dict) -> Instance:
                 room_kind=(s.get("room_kind", default_room) if isinstance(s, dict) else default_room),
                 needs=frozenset(s.get("needs", []) if isinstance(s, dict) else []),
                 seats=int(s.get("seats", 0)) if isinstance(s, dict) else 0,
+                rooms=(_room_list(s) if isinstance(s, dict) else ()) or course_rooms,
             )
             for i, s in enumerate(secs)
         )
@@ -353,6 +406,24 @@ def validate(inst: Instance) -> None:
     errs: list[str] = []
     seen: set[str] = set()
 
+    for g in inst.groups.values():
+        if not g.home_room:
+            continue
+        room = inst.rooms.get(g.home_room)
+        if room is None:
+            errs.append(f"class {g.id}: home room {g.home_room!r} is not in the room list")
+        elif room.kind == "lab":
+            errs.append(f"class {g.id}: home room {g.home_room} is a lab, not a classroom")
+        elif room.capacity < g.strength:
+            errs.append(
+                f"class {g.id}: home room {g.home_room} seats {room.capacity} but the "
+                f"class has {g.strength} students"
+            )
+
+    for sid, member in inst.staff.items():
+        if member.max_consecutive < 0:
+            errs.append(f"staff {sid}: max_consecutive must be >= 0 (0 means no limit)")
+
     for c in inst.courses:
         if c.uid in seen:
             errs.append(f"duplicate course {c.code!r} in group {c.group!r}")
@@ -375,7 +446,19 @@ def validate(inst: Instance) -> None:
             for sid in s.staff:
                 if sid not in inst.staff:
                     errs.append(f"{c.uid} section {s.index}: unknown staff {sid!r}")
-            if c.group in inst.groups and not inst.candidate_rooms(c, s):
+            unknown_rooms = [r for r in s.rooms if r not in inst.rooms]
+            if unknown_rooms:
+                errs.append(
+                    f"{c.uid} section {s.index}: room(s) {', '.join(unknown_rooms)} "
+                    f"are not in the room list"
+                )
+            elif s.rooms and c.group in inst.groups and not inst.candidate_rooms(c, s):
+                errs.append(
+                    f"{c.uid} section {s.index}: none of its rooms "
+                    f"({', '.join(s.rooms)}) is a {s.room_kind} with >= "
+                    f"{inst.seats_for(c, s)} seats and facilities {sorted(s.needs) or '[]'}"
+                )
+            elif c.group in inst.groups and not inst.candidate_rooms(c, s):
                 errs.append(
                     f"{c.uid} section {s.index}: no room is a {s.room_kind} with "
                     f">= {inst.seats_for(c, s)} seats and facilities "

@@ -24,11 +24,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
+from . import baseline as baseline_mod
 from . import data as data_mod
 from . import preflight, report, verify
 from .config import Weights
 from .data import Instance, InstanceError
-from .model import TimetableModel
+from .model import TimetableModel, explain
 from .types import Solution
 
 STATIC = Path(__file__).parent / "static"
@@ -43,7 +44,7 @@ MAX_YAML_BYTES = 2 * 1024 * 1024
 # the user is looking at instead of re-solving and possibly finding another
 # optimum.  Bounded: this is a single-user tool, not a service.
 _CACHE_SIZE = 32
-_results: "OrderedDict[str, tuple[Instance, Solution]]" = OrderedDict()
+_results: "OrderedDict[str, tuple[Instance, Solution, set]]" = OrderedDict()
 
 
 app = FastAPI(title="AMCS Timetable Generator", docs_url="/api/docs")
@@ -192,6 +193,9 @@ class InstanceBody(BaseModel):
 class SolveBody(InstanceBody):
     time: float = 30.0
     seed: int = 0
+    # The timetable to stay close to: rows shaped like the CSV export
+    # (group, course, batch, day, period, room, locked).
+    baseline: list[dict[str, Any]] | None = None
 
 
 def _raw(body: InstanceBody) -> dict[str, Any]:
@@ -299,6 +303,7 @@ def _instance_payload(inst: Instance) -> dict[str, Any]:
                 "id": gid,
                 "name": g.name,
                 "strength": g.strength,
+                "home_room": g.home_room,
                 "demand": inst.demand(gid),
                 # weekly, by subtraction -- there is no per-day free count
                 "free": inst.free_periods(gid),
@@ -314,6 +319,7 @@ def _instance_payload(inst: Instance) -> dict[str, Any]:
                 "name": s.name,
                 "kind": s.kind,
                 "unavailable": sorted([d, p] for d, p in s.unavailable),
+                "max_consecutive": s.max_consecutive,
             }
             for sid, s in inst.staff.items()
         ],
@@ -371,9 +377,9 @@ def inspect(body: InstanceBody) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
-def _remember(inst: Instance, sol: Solution) -> str:
+def _remember(inst: Instance, sol: Solution, locked: set) -> str:
     rid = uuid.uuid4().hex[:12]
-    _results[rid] = (inst, sol)
+    _results[rid] = (inst, sol, locked)
     while len(_results) > _CACHE_SIZE:
         _results.popitem(last=False)
     return rid
@@ -407,7 +413,16 @@ def solve(body: SolveBody) -> dict[str, Any]:
     """
     inst = _parse(body)
 
+    entries = None
+    if body.baseline:
+        try:
+            entries = baseline_mod.from_rows(body.baseline)
+        except ValueError as exc:
+            raise HTTPException(400, f"the previous timetable could not be read: {exc}") from exc
+
     problems = preflight.check(inst)
+    if entries:
+        problems += baseline_mod.lock_problems(inst, entries)
     if problems:
         return {
             "ok": False,
@@ -417,21 +432,45 @@ def solve(body: SolveBody) -> dict[str, Any]:
         }
 
     time_limit = max(1.0, min(float(body.time), MAX_TIME_LIMIT))
-    sol = TimetableModel(inst).solve(time_limit=time_limit, seed=body.seed)
+    sol = TimetableModel(inst, baseline=entries).solve(time_limit=time_limit, seed=body.seed)
 
     if not sol.ok:
+        why = None
+        if sol.status == "INFEASIBLE":
+            why = explain(inst, baseline=entries, time_limit=min(60.0, time_limit))
         return {
             "ok": False,
             "stage": "search",
             "status": sol.status,
             "wall_time": round(sol.wall_time, 2),
             "problems": [],
+            # the rules that cannot all hold, when the solver could pin them down
+            "conflict": why,
             "instance": _instance_payload(inst),
         }
 
-    violations = verify.verify(inst, sol)
+    violations = verify.verify(inst, sol, baseline=entries)
     penalties, total = _penalty_payload(inst, sol)
-    rid = _remember(inst, sol)
+    locked = {(e.group, e.course, e.day, e.period) for e in entries or [] if e.locked}
+    rid = _remember(inst, sol, locked)
+
+    changes = None
+    old_slot: set = set()
+    old_room: dict = {}
+    if entries:
+        changes = baseline_mod.diff(inst, entries, sol.meetings)
+        usable, _ = baseline_mod.split(inst, entries)
+        old_slot = {(e.group, e.course, e.day, e.period) for e in usable}
+        old_room = {(e.group, e.course, e.section, e.day, e.period): e.room for e in usable}
+    n_sections = {c.uid: len(c.sections) for c in inst.courses}
+
+    def changed(mt) -> bool:
+        if not entries:
+            return False
+        if (mt.group, mt.course, mt.day, mt.period) not in old_slot:
+            return True
+        was = old_room.get((mt.group, mt.course, mt.section, mt.day, mt.period))
+        return bool(was) and was != mt.room
 
     return {
         "ok": True,
@@ -447,6 +486,7 @@ def solve(body: SolveBody) -> dict[str, Any]:
         "violations": violations,
         "penalties": penalties,
         "total_cost": total,
+        "changes": changes,
         "instance": _instance_payload(inst),
         "meetings": [
             {
@@ -457,13 +497,11 @@ def solve(body: SolveBody) -> dict[str, Any]:
                 "day": mt.day,
                 "period": mt.period,
                 "batch": mt.section + 1,
-                "batches": len(
-                    [c for c in inst.courses if c.uid == f"{mt.group}:{mt.course}"][
-                        0
-                    ].sections
-                ),
+                "batches": n_sections[f"{mt.group}:{mt.course}"],
                 "staff": [inst.staff[s].name for s in mt.staff],
                 "room": mt.room,
+                "locked": (mt.group, mt.course, mt.day, mt.period) in locked,
+                "changed": changed(mt),
             }
             for mt in sol.meetings
         ],
@@ -475,7 +513,7 @@ def solve(body: SolveBody) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
-def _lookup(result_id: str) -> tuple[Instance, Solution]:
+def _lookup(result_id: str) -> tuple[Instance, Solution, set]:
     got = _results.get(result_id)
     if not got:
         raise HTTPException(
@@ -485,10 +523,13 @@ def _lookup(result_id: str) -> tuple[Instance, Solution]:
 
 
 def _render(result_id: str, suffix: str, writer) -> str:
-    inst, sol = _lookup(result_id)
+    inst, sol, locked = _lookup(result_id)
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / f"timetable{suffix}"
-        writer(inst, sol, path)
+        if writer is report.to_csv:
+            writer(inst, sol, path, locked=locked)
+        else:
+            writer(inst, sol, path)
         return path.read_text(encoding='utf-8')
 
 

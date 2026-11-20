@@ -17,17 +17,40 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
+from typing import TYPE_CHECKING
+
 from ortools.sat.python import cp_model
 
 from .data import Course, Instance, Section
 from .types import Meeting, Solution
 
+if TYPE_CHECKING:
+    from .baseline import Entry
+
 
 class TimetableModel:
-    def __init__(self, inst: Instance) -> None:
+    """The CP-SAT model for one instance.
+
+    ``baseline`` is a previous timetable to stay close to (see `baseline.py`);
+    its ``locked`` rows become hard rules.  ``diagnose`` builds the hard
+    constraints only, with each *relaxable* rule (a teacher's unavailability,
+    a daily cap, a lock, a home room ...) switchable by an assumption literal,
+    so that an infeasible instance can be explained by the rules that clash.
+    """
+
+    def __init__(
+        self,
+        inst: Instance,
+        baseline: "list[Entry] | None" = None,
+        diagnose: bool = False,
+    ) -> None:
         self.inst = inst
         self.grid = inst.grid
         self.m = cp_model.CpModel()
+        self.baseline = list(baseline or [])
+        self.diagnose = diagnose
+        # key -> (assumption literal, plain-English description)
+        self._guards: dict[str, tuple[cp_model.IntVar, str]] = {}
 
         self.x: dict[tuple[str, str, int], cp_model.IntVar] = {}
         self.blk: dict[tuple[str, str, int], cp_model.IntVar] = {}
@@ -46,6 +69,39 @@ class TimetableModel:
     # Model construction
     # ------------------------------------------------------------------ #
 
+    # -- relaxable rules (only switchable in diagnose mode) ---------------- #
+
+    def _guard(self, key: str, text: str):
+        """The assumption literal for a relaxable rule, or None when solving."""
+        if not self.diagnose:
+            return None
+        if key not in self._guards:
+            self._guards[key] = (self.m.NewBoolVar(f"guard[{key}]"), text)
+        return self._guards[key][0]
+
+    def _add(self, ct, key: str | None = None, text: str = ""):
+        """Post a constraint, enforced by a guard literal when diagnosing."""
+        if key is not None:
+            lit = self._guard(key, text)
+            if lit is not None:
+                ct.OnlyEnforceIf(lit)
+        return ct
+
+    def _rooms(self, c: Course, s: Section) -> list[str]:
+        """Rooms a section may use.  When diagnosing, the home-room rule is a
+        separate guarded constraint instead of a filter, so it can be blamed."""
+        if self.diagnose and self.inst.home_room_of(c, s):
+            seats = self.inst.seats_for(c, s)
+            return [
+                r.id for r in self.inst.rooms.values()
+                if r.suits(s.room_kind, seats, s.needs)
+            ]
+        return self.inst.candidate_rooms(c, s)
+
+    def _cname(self, c: Course) -> str:
+        title = "" if c.title == c.code else f" {c.title.title()}"
+        return f"{c.code}{title} ({self.inst.groups[c.group].name})"
+
     def _build(self) -> None:
         self._make_vars()
         self._hard_hours_and_shape()
@@ -54,6 +110,9 @@ class TimetableModel:
         self._hard_availability()
         self._hard_staff_clash()
         self._hard_rooms()
+        self._baseline()
+        if self.diagnose:
+            return
         self._soft_student_gaps()
         self._soft_staff_gaps_and_days()
         self._soft_late_periods()
@@ -72,7 +131,7 @@ class TimetableModel:
                     for k in range(len(grid.blocks)):
                         self.blk[c.uid, d, k] = m.NewBoolVar(f"blk[{c.uid},{d},B{k}]")
             for s in c.sections:
-                for r in self.inst.candidate_rooms(c, s):
+                for r in self._rooms(c, s):
                     for d, p in grid.slots():
                         self.y[c.uid, s.index, d, p, r] = m.NewBoolVar(
                             f"y[{c.uid},s{s.index},{d},P{p},{r}]"
@@ -105,8 +164,10 @@ class TimetableModel:
                         m.Add(self.x[c.uid, d, p1] == b)
                         m.Add(self.x[c.uid, d, p2] == b)
                     # H9: at most one session of this lab per day
-                    m.AddAtMostOne(
-                        self.blk[c.uid, d, k] for k in range(len(grid.blocks))
+                    self._add(
+                        m.Add(sum(self.blk[c.uid, d, k] for k in range(len(grid.blocks))) <= 1),
+                        f"labdays:{c.uid}",
+                        f"{self._cname(c)} holding its lab sessions on different days",
                     )
                 # H8: exactly hours/2 two-period sessions
                 m.Add(
@@ -121,8 +182,10 @@ class TimetableModel:
                 # H10: a theory course meets at most `max_per_day` times a day,
                 # which spreads a 5-hour subject across the whole week.
                 for d in grid.days:
-                    m.Add(
-                        sum(self.x[c.uid, d, p] for p in grid.periods) <= c.max_per_day
+                    self._add(
+                        m.Add(sum(self.x[c.uid, d, p] for p in grid.periods) <= c.max_per_day),
+                        f"spread:{c.uid}",
+                        f"{self._cname(c)} meeting at most {c.max_per_day} time(s) a day",
                     )
                     if c.consecutive and c.max_per_day > 1:
                         # A day's meetings form one unbroken run: never a
@@ -138,7 +201,12 @@ class TimetableModel:
 
             # H11: pinned slots
             for d, p in c.pins:
-                m.Add(self.x[c.uid, d, p] == 1)
+                self._add(
+                    m.Add(self.x[c.uid, d, p] == 1),
+                    f"pin:{c.uid}",
+                    f"{self._cname(c)} pinned to "
+                    + ", ".join(f"{a} P{b}" for a, b in c.pins),
+                )
 
     # -- H2: a class is in at most one place at a time --------------------- #
 
@@ -168,12 +236,21 @@ class TimetableModel:
     def _hard_availability(self) -> None:
         m = self.m
         for c in self.inst.courses:
-            dead: set[tuple[str, int]] = set(c.forbidden) | set(self.inst.blocked_slots)
-            for s in c.sections:
-                for sid in s.staff:
-                    dead |= set(self.inst.staff[sid].unavailable)
-            for d, p in dead:
-                m.Add(self.x[c.uid, d, p] == 0)
+            # Each reason a slot is closed is its own rule, so a diagnosis can
+            # say *which* one is in the way.
+            for d, p in sorted(c.forbidden):
+                self._add(m.Add(self.x[c.uid, d, p] == 0), f"forbid:{c.uid}",
+                          f"{self._cname(c)} kept out of "
+                          + ", ".join(f"{a} P{b}" for a, b in sorted(c.forbidden)))
+            for d, p in sorted(self.inst.blocked_slots):
+                self._add(m.Add(self.x[c.uid, d, p] == 0), "blocked",
+                          "the college-wide blocked slots")
+            for sid in sorted({sid for s in c.sections for sid in s.staff}):
+                member = self.inst.staff[sid]
+                for d, p in sorted(member.unavailable):
+                    self._add(m.Add(self.x[c.uid, d, p] == 0), f"avail:{sid}",
+                              f"{member.name} being unavailable at "
+                              f"{_slots_text(self.grid, member.unavailable)}")
 
     # -- H4: no staff member is in two rooms at once ----------------------- #
 
@@ -198,9 +275,25 @@ class TimetableModel:
                 # constraint: two sections at once would need sbusy == 2.
                 m.Add(sum(self.x[u, d, p] for u in uids) == self.sbusy[sid, d, p])
 
-            cap = self.inst.staff[sid].max_periods_per_day
+            member = self.inst.staff[sid]
+            cap = member.max_periods_per_day
             for d in self.grid.days:
-                m.Add(sum(self.sbusy[sid, d, p] for p in self.grid.periods) <= cap)
+                self._add(
+                    m.Add(sum(self.sbusy[sid, d, p] for p in self.grid.periods) <= cap),
+                    f"cap:{sid}", f"{member.name} teaching at most {cap} periods a day",
+                )
+
+            # H17: no more than `max_consecutive` periods in an unbroken run.
+            run = member.max_consecutive
+            ps = self.grid.periods
+            if run and uids and run < len(ps):
+                for d in self.grid.days:
+                    for i in range(len(ps) - run):
+                        self._add(
+                            m.Add(sum(self.sbusy[sid, d, q] for q in ps[i : i + run + 1]) <= run),
+                            f"run:{sid}",
+                            f"{member.name} teaching at most {run} periods in a row",
+                        )
 
     # -- H5/H6/H15: rooms ------------------------------------------------- #
 
@@ -210,7 +303,18 @@ class TimetableModel:
 
         for c in self.inst.courses:
             for s in c.sections:
-                rooms = self.inst.candidate_rooms(c, s)   # H6: already filtered
+                rooms = self._rooms(c, s)                 # H6: already filtered
+                home = self.inst.home_room_of(c, s) if self.diagnose else None
+                if home:
+                    grp = self.inst.groups[c.group]
+                    for d, p in grid.slots():
+                        for r in rooms:
+                            if r != home:
+                                self._add(
+                                    m.Add(self.y[c.uid, s.index, d, p, r] == 0),
+                                    f"home:{c.group}",
+                                    f"{grp.name} having every class in its home room {home}",
+                                )
                 for d, p in grid.slots():
                     picks = [self.y[c.uid, s.index, d, p, r] for r in rooms]
                     # Every parallel section needs its own room whenever the
@@ -326,7 +430,7 @@ class TimetableModel:
         m, grid = self.m, self.grid
         for c in self.inst.courses:
             for s in c.sections:
-                for r in self.inst.candidate_rooms(c, s):
+                for r in self._rooms(c, s):
                     used = m.NewBoolVar(f"used[{c.uid},s{s.index},{r}]")
                     m.AddMaxEquality(
                         used, [self.y[c.uid, s.index, d, p, r] for d, p in grid.slots()]
@@ -358,6 +462,45 @@ class TimetableModel:
                 for d in grid.days:
                     for k in range(n_blocks):
                         self._pen["early_lab"] += [self.blk[c.uid, d, k]] * k
+
+    # -- the published timetable: stay close, honour locks ----------------- #
+
+    def _baseline(self) -> None:
+        if not self.baseline:
+            return
+        from .baseline import split        # baseline imports Meeting from here
+
+        m = self.m
+        usable, _dropped = split(self.inst, self.baseline)
+        courses = self._by_uid
+        kept_slots: set[tuple[str, str, int]] = set()
+        kept_rooms: set[tuple[str, int, str, int, str]] = set()
+        for e in usable:
+            c = courses[e.uid]
+            x = self.x[e.uid, e.day, e.period]
+            if e.slot_key not in kept_slots:
+                kept_slots.add(e.slot_key)
+                if not self.diagnose:
+                    self._pen["changed_slot"].append(1 - x)
+            yv = self.y.get((e.uid, e.section, e.day, e.period, e.room))
+            if yv is not None:
+                kept_rooms.add((e.uid, e.section, e.day, e.period, e.room))
+                if not self.diagnose:
+                    self._pen["changed_room"].append(x - yv)
+            if e.locked:
+                key = f"lock:{e.uid}:{e.day}:{e.period}"
+                text = f"{self._cname(c)} locked at {e.day} P{e.period}"
+                self._add(m.Add(x == 1), key, text)
+                if yv is not None:
+                    self._add(m.Add(yv == 1), key, text)
+
+        # Start the search from the published timetable: it is usually all
+        # but legal already, so this finds a near-identical answer fast.
+        for (uid, d, p), var in self.x.items():
+            m.AddHint(var, (uid, d, p) in kept_slots)
+        for key, var in self.y.items():
+            if key in kept_rooms:
+                m.AddHint(var, 1)
 
     # ------------------------------------------------------------------ #
 
@@ -436,5 +579,47 @@ class TimetableModel:
         return sol
 
 
-def solve(inst: Instance, **kw) -> Solution:
-    return TimetableModel(inst).solve(**kw)
+def solve(inst: Instance, baseline=None, **kw) -> Solution:
+    return TimetableModel(inst, baseline=baseline).solve(**kw)
+
+
+def explain(inst: Instance, baseline=None, time_limit: float = 30.0) -> list[str] | None:
+    """Why no timetable exists: a small set of rules that cannot all hold.
+
+    Every relaxable rule is switched on by an assumption; when the hard model
+    is infeasible CP-SAT reports a subset of those assumptions that is already
+    contradictory.  Returns their descriptions (empty means the clash is in
+    the fixed structure -- hours, rooms, batches -- rather than any one rule),
+    or None if the search could not decide in time.
+    """
+    tm = TimetableModel(inst, baseline=baseline, diagnose=True)
+    lits = {lit.Index(): text for lit, text in tm._guards.values()}
+    tm.m.AddAssumptions([lit for lit, _ in tm._guards.values()])
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = time_limit
+    # Core extraction is only reliable on a single search worker.
+    solver.parameters.num_workers = 1
+    status = solver.Solve(tm.m)
+    if status != cp_model.INFEASIBLE:
+        return None
+    core = solver.SufficientAssumptionsForInfeasibility()
+    return sorted({lits[i] for i in core if i in lits})
+
+
+def _slots_text(grid, slots) -> str:
+    """{(MON,1)..(MON,8),(FRI,5)} -> "all of MON, FRI P5"."""
+    by_day: dict[str, list[int]] = defaultdict(list)
+    for d, p in slots:
+        by_day[d].append(p)
+    parts = []
+    for d in grid.days:
+        ps = sorted(by_day.get(d, []))
+        if not ps:
+            continue
+        if ps == list(grid.periods):
+            parts.append(f"all of {d}")
+        elif ps == list(range(ps[0], ps[-1] + 1)) and len(ps) > 1:
+            parts.append(f"{d} P{ps[0]}-{ps[-1]}")
+        else:
+            parts.append(f"{d} " + ",".join(f"P{p}" for p in ps))
+    return ", ".join(parts)

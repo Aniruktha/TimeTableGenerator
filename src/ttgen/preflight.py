@@ -62,6 +62,17 @@ def check(inst: Instance) -> list[str]:
                         )
                     owner.setdefault(sid, c.code)
 
+    #    Parallel batches each need their own room at the same moment.
+    for c in inst.courses:
+        if len(c.sections) < 2:
+            continue
+        pool = {r for s in c.sections for r in inst.candidate_rooms(c, s)}
+        if len(pool) < len(c.sections):
+            problems.append(
+                f"{c.uid} ({c.title}): {len(c.sections)} batches run at once but only "
+                f"{len(pool)} room(s) can take them ({', '.join(sorted(pool)) or 'none'})"
+            )
+
     # 3. A staff member cannot exceed the hours actually available to them.
     for sid, member in inst.staff.items():
         load = sum(c.hours for c, _ in inst.courses_of_staff(sid))
@@ -73,11 +84,23 @@ def check(inst: Instance) -> list[str]:
                 f"{member.name}: assigned {load} periods but only {len(avail)} "
                 f"slots are available to them"
             )
-        day_cap = member.max_periods_per_day * len(grid.days)
+        # Only days they can actually come in count towards the daily cap.
+        days_in = len({d for d, _ in avail})
+        day_cap = member.max_periods_per_day * days_in
         if load > day_cap:
             problems.append(
                 f"{member.name}: assigned {load} periods but max_periods_per_day="
-                f"{member.max_periods_per_day} caps the week at {day_cap}"
+                f"{member.max_periods_per_day} over the {days_in} day(s) they can "
+                f"come in caps the week at {day_cap}"
+            )
+        # A lab block is two periods back to back, so a one-in-a-row limit
+        # rules out every lab the person takes.
+        if member.max_consecutive == 1 and any(
+            c.is_lab for c, _ in inst.courses_of_staff(sid)
+        ):
+            problems.append(
+                f"{member.name}: max_consecutive=1 but they take a lab, which is "
+                f"two periods in a row"
             )
 
     # 4. A course that meets at most once (or twice) a day needs that many days
@@ -179,7 +202,25 @@ def check(inst: Instance) -> list[str]:
                 f"{', '.join(sorted(set(uids)))}"
             )
 
-    # 9. A pin must not land where the staff is unavailable.
+    # 9. Classes sharing one home room take turns in it.
+    by_room: dict[str, list[str]] = defaultdict(list)
+    for gid, grp in inst.groups.items():
+        if grp.home_room:
+            by_room[grp.home_room].append(gid)
+    for room, gids in by_room.items():
+        need = sum(
+            c.hours
+            for gid in gids
+            for c in inst.courses_of(gid)
+            if any(inst.home_room_of(c, s) for s in c.sections)
+        )
+        if need > n_free:
+            problems.append(
+                f"home room {room} is shared by {', '.join(gids)}, whose classes "
+                f"need {need} periods in it but the week has {n_free}"
+            )
+
+    # 10. A pin must not land where the staff is unavailable.
     for c in inst.courses:
         for slot in c.pins:
             for s in c.sections:

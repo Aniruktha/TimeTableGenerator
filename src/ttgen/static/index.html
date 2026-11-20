@@ -218,6 +218,16 @@ iframe.preview{width:100%;height:520px;border:1px solid var(--line);
 .overlay .box h3{font-size:17px;margin-bottom:8px}
 .overlay .box p{color:var(--muted);font-size:14px}
 .overlay .spinner{margin:0 auto 16px;width:26px;height:26px;border-width:3px}
+table.tt td.pick{cursor:pointer}
+table.tt td.pick:hover{box-shadow:inset 0 0 0 2px var(--brand)}
+table.tt td.chg{box-shadow:inset 0 0 0 2px var(--amber)}
+table.tt td.sel{box-shadow:inset 0 0 0 3px var(--brand)!important}
+.lock{font-size:11px;margin-left:3px}
+.actionbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:11px 14px;
+  border:1px solid var(--brand);background:var(--brand-soft);border-radius:11px;margin:0 0 14px}
+.actionbar b{font-weight:650}
+.pendbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:11px 22px;
+  background:var(--amber-soft);color:var(--amber);border-bottom:1px solid var(--line)}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -290,6 +300,16 @@ let result = null;      // last solve response
 let tab = "classes";
 let staffPick = null;
 let editing = null;     // {section, index} while a row is being edited
+let picked = null;      // {group, course, day, period} -- a cell clicked in the result
+let pending = 0;        // locks / moves made on the result, not yet re-planned
+let stayClose = true;   // re-plan from the previous timetable (S.timetable)
+
+/* The previous timetable (S.timetable) is kept inside the setup itself, so
+   "Save to this site" keeps the published timetable with the data, and a
+   re-plan weeks later can start from it. Rows match the CSV export. */
+const slotKey = (g, c, d, p) => `${g}|${c}|${d}|${p}`;
+const lockedKeys = () => new Set((S.timetable || []).filter(r => r.locked)
+  .map(r => slotKey(r.group, r.course, r.day, r.period)));
 
 const STEPS = [
   {key:"start",    label:"Start"},
@@ -330,9 +350,16 @@ const PHRASES = [
   [/^(.+?): assigned (\d+) periods but only (\d+) slots are available to them$/,
    (m) => `${m[1]} is down to teach ${m[2]} periods a week but is only free for ` +
      `${m[3]}. Reduce their subjects, or tick fewer days off for them.`],
-  [/^(.+?): assigned (\d+) periods but max_periods_per_day=(\d+) caps the week at (\d+)$/,
+  [/^(.+?): assigned (\d+) periods but max_periods_per_day=(\d+) over the (\d+) day\(s\) they can come in caps the week at (\d+)$/,
    (m) => `${m[1]} is down to teach ${m[2]} periods a week, but at most ${m[3]} a day ` +
-     `that only comes to ${m[4]}. Raise their daily limit or give them less.`],
+     `on the ${m[4]} day(s) they come in only comes to ${m[5]}. Raise their daily limit, ` +
+     `free up another day, or give them less.`],
+  [/^class (\S+): home room (\S+) seats (\d+) but the class has (\d+) students$/,
+   (m) => `${groupName(m[1])} has ${m[4]} students but its home room ${m[2]} only seats ` +
+     `${m[3]}. Pick a bigger home room on the Classes step.`],
+  [/^(\S+) (\S+) locked at (\S+) P(\d+), but (.+)$/,
+   (m) => `${m[2]} (${groupName(m[1])}) is locked at ${m[3]} period ${m[4]}, but ${m[5]}. ` +
+     `Unlock it on the Generate step, or undo the change that clashes with it.`],
   [/^(.+?): (\d+) periods of teaching demanded but only (\d+) slots exist in the week$/,
    (m) => `${m[1]} has ${m[2]} periods of subjects but only ${m[3]} slots in the week. ` +
      `Cut some hours, or add more periods to the day.`],
@@ -477,9 +504,9 @@ const IMPORTS = {
   },
   staff: {
     file: "teachers.csv",
-    cols: ["name","type","unavailable","max_per_day"],
-    example: ["Anand R","regular","",  "6"],
-    example2: ["Deepak N","visiting","MON;WED","4"],
+    cols: ["name","type","unavailable","max_per_day","max_in_a_row"],
+    example: ["Anand R","regular","",  "6", "3"],
+    example2: ["Deepak N","visiting","MON;WED","4", ""],
     hint: "<code>type</code> is <code>regular</code>, <code>visiting</code> or " +
           "<code>other_dept</code>. <code>unavailable</code> lists whole days " +
           "they cannot come, separated by <code>;</code>.",
@@ -490,18 +517,22 @@ const IMPORTS = {
       unavailable: (r.unavailable || "").split(";").map(x=>x.trim().toUpperCase())
         .filter(d => DAYS_ALL.includes(d)).map(d => `${d}:*`),
       max_periods_per_day: +r.max_per_day || 6,
+      max_consecutive: +r.max_in_a_row || 0,
     }),
   },
   groups: {
     file: "classes.csv",
-    cols: ["name","students"],
-    example: ["M.Sc. Software Systems","40"],
-    example2: ["M.Sc. Data Science","35"],
-    hint: "One row per group of students who must never be in two places at once.",
+    cols: ["name","students","home_room"],
+    example: ["M.Sc. Software Systems","40","M201"],
+    example2: ["M.Sc. Data Science","35",""],
+    hint: "One row per group of students who must never be in two places at once. " +
+          "<code>home_room</code> is optional: the classroom where all its theory is held.",
     make: (r, taken) => ({
       id: slug(r.name, taken),
       name: r.name,
       strength: +r.students || 40,
+      ...(r.home_room ? {home_room: (S.rooms.find(x =>
+        x.id.toLowerCase() === r.home_room.toLowerCase()) || {id: r.home_room}).id} : {}),
     }),
   },
   courses: {
@@ -752,6 +783,7 @@ function viewTeachers() {
       <td><b>${esc(s.name)}</b></td>
       <td>${({internal:"Regular", visiting:"Visiting", other_dept:"Other dept"})[s.kind] || s.kind}</td>
       <td class="num">${s.max_periods_per_day ?? 6}</td>
+      <td class="num">${s.max_consecutive || "—"}</td>
       <td>${offDays.length ? offDays.map(d=>`<span class="chip">${d}</span>`).join(" ") : "—"}</td>
       <td class="act">
         <button class="btn tiny" data-edit="staff" data-i="${i}">Edit</button>
@@ -773,7 +805,7 @@ function viewTeachers() {
     <div class="inner">
       ${S.staff.length ? `<table class="list">
         <tr><th>Name</th><th>Type</th><th class="num">Max periods/day</th>
-            <th>Days off</th><th></th></tr>${rows}</table>`
+            <th class="num">Max in a row</th><th>Days off</th><th></th></tr>${rows}</table>`
       : `<div class="empty"><b>No teachers yet</b>Add your first one below.</div>`}
 
       <div class="sec-title">${e ? "Edit teacher" : "Add a teacher"}</div>
@@ -789,6 +821,9 @@ function viewTeachers() {
           <p class="help">Visiting teachers get their classes bunched into as few days as possible.</p></div>
         <div class="f"><label>Most periods in one day</label>
           <input type="number" id="s_max" min="1" max="12" value="${e?(e.max_periods_per_day??6):6}"></div>
+        <div class="f"><label>Most periods in a row <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+          <input type="number" id="s_run" min="0" max="12" value="${e?.max_consecutive || ""}" placeholder="no limit">
+          <p class="help">Short breaks don't reset the count. A lab is two in a row.</p></div>
       </div>
       <div class="f" style="margin-top:14px">
         <label>Days this teacher cannot come in</label>
@@ -835,6 +870,7 @@ function viewClasses() {
     return `<tr>
       <td><b>${esc(g.name)}</b></td>
       <td class="num">${g.strength}</td>
+      <td>${g.home_room ? esc(g.home_room) : '<span style="color:var(--muted)">any</span>'}</td>
       <td class="num">${subj.length}</td>
       <td class="num">${demandFor(g.id)} / ${slotsInWeek()}</td>
       <td class="num" style="${free < 0 ? "color:var(--red);font-weight:700" : ""}">${free}</td>
@@ -853,7 +889,7 @@ function viewClasses() {
     </div>
     <div class="inner">
       ${S.groups.length ? `<table class="list">
-        <tr><th>Class</th><th class="num">Students</th><th class="num">Subjects</th>
+        <tr><th>Class</th><th class="num">Students</th><th>Home room</th><th class="num">Subjects</th>
             <th class="num">Periods used</th><th class="num">Free / week</th>
             <th></th></tr>${rows}</table>`
       : `<div class="empty"><b>No classes yet</b>Add your first one below.</div>`}
@@ -866,6 +902,12 @@ function viewClasses() {
         <div class="f"><label>Number of students</label>
           <input type="number" id="g_str" min="1" value="${e?e.strength:40}">
           <p class="help">Used to pick rooms big enough.</p></div>
+        <div class="f"><label>Home classroom</label>
+          <select id="g_home"><option value="">No fixed room — use any free classroom</option>
+            ${S.rooms.filter(r => r.kind !== "lab").map(r =>
+              `<option value="${esc(r.id)}"${e&&e.home_room===r.id?" selected":""}>${esc(r.id)} · ${r.capacity} seats</option>`).join("")}
+          </select>
+          <p class="help">All its theory periods are held here. Labs and electives still go wherever they fit.</p></div>
       </div>
       <div class="btnrow" style="margin-top:14px">
         <button class="btn primary" data-save="groups">${e ? "Save changes" : "Add class"}</button>
@@ -943,6 +985,11 @@ function viewSubjects() {
         <div class="f"><label>Periods per week</label>
           <input type="number" id="c_hours" min="1" max="20" value="${e?e.hours:3}">
           <p class="help" id="c_hint">A lab runs in 2-period blocks, so its total must be even.</p></div>
+        <div class="f"><label>Room</label>
+          <select id="c_room"><option value="">${kind === "lab" ? "Any suitable lab" : "The class's home room, or any free one"}</option>
+            ${S.rooms.map(r => `<option value="${esc(r.id)}"${(e?.rooms||[])[0]===r.id||e?.room===r.id?" selected":""}>${esc(r.id)} (${r.kind})</option>`).join("")}
+          </select>
+          <p class="help">Only if this subject must always be in one place, e.g. a seminar hall.</p></div>
         <div class="f"><label>How many batches?</label>
           <input type="number" id="c_batches" min="1" max="6" value="${secs.length}">
           <p class="help">Labs only. Students split into this many groups, each in its own lab.</p></div>
@@ -1004,6 +1051,8 @@ function viewGenerate() {
         Longer usually means fewer gaps in everyone's day. You can stop at any answer
         and try again — a different attempt gives a different timetable.</p>
 
+      ${previousPanel()}
+
       <div class="btnrow" style="margin-top:24px">
         <button class="btn big" id="btncheck" ${ready?"":"disabled"}>Check for problems</button>
         <button class="btn big primary" id="btngen" ${ready?"":"disabled"}>Generate timetable</button>
@@ -1011,6 +1060,52 @@ function viewGenerate() {
       <div id="genmsg"></div>
     </div>
   </div>`;
+}
+
+/* Things said about the *timetable* rather than the data: the published
+   timetable to stay close to, periods locked in it, and "not here" rules
+   added by clicking a period. All of it lives in S, so it is saved. */
+function forbidRules() {
+  const out = [];
+  S.courses.forEach((c, ci) => (c.forbid || []).forEach((f, fi) =>
+    out.push({ci, fi, text: `${c.code} (${groupName(c.group)}) not on ${String(f).replace(":", " P")}`})));
+  return out;
+}
+
+function previousPanel() {
+  const tt = S.timetable || [];
+  const locks = tt.filter(r => r.locked);
+  const lockSlots = new Set(locks.map(r => slotKey(r.group, r.course, r.day, r.period)));
+  const rules = forbidRules();
+  const ruleList = rules.length ? `<div class="f" style="margin-top:12px"><label>“Not here” rules</label>
+      <div class="toggles">${rules.map(r => `<span class="chip">${esc(r.text)}
+        <button data-unforbid="${r.ci}:${r.fi}" title="Remove this rule">&times;</button></span>`).join("")}</div></div>` : "";
+  if (!tt.length) return `<div class="sec-title">Re-planning a published timetable?</div>
+      <p class="help" style="color:var(--muted);font-size:13px">Load the timetable CSV you
+        published. Generating will then keep as much of it as it can, and only move what has to move.</p>
+      <div class="btnrow" style="margin-top:8px">
+        <button class="btn tiny" data-loadprev="1">Load a published timetable (CSV)…</button></div>${ruleList}`;
+  return `<div class="sec-title">Previous timetable</div>
+    <div class="note info"><span class="ico">&#128204;</span><span>
+      This setup carries a timetable of <b>${new Set(tt.map(r=>slotKey(r.group,r.course,r.day,r.period))).size}</b>
+      class-periods${lockSlots.size ? `, <b>${lockSlots.size} locked</b>` : ""}.
+      ${stayClose ? "Generating will <b>keep as much of it as possible</b> and only move what your changes force."
+                  : "Generating will make a <b>fresh</b> timetable" + (lockSlots.size ? " that still keeps the locked periods." : ".")}
+    </span></div>
+    <div class="toggles">
+      <button class="tg ${stayClose?"on":""}" data-close="1">Stay close to it</button>
+      <button class="tg ${stayClose?"":"on"}" data-close="0">Start fresh</button>
+      ${lockSlots.size ? `<button class="tg" data-unlockall="1">Unlock all</button>` : ""}
+      <button class="tg" data-loadprev="1">Replace with a CSV…</button>
+      <button class="tg" data-forgetprev="1">Forget it</button>
+    </div>${ruleList}`;
+}
+
+/* What goes to the server as the baseline: everything when staying close,
+   otherwise only the locked rows (they hold either way). */
+function baselineRows() {
+  const tt = S.timetable || [];
+  return stayClose ? tt : tt.filter(r => r.locked);
 }
 
 /* ================================================================ results */
@@ -1034,8 +1129,12 @@ function showResult() {
       ${clean ? "" : `<span class="pill bad">${d.violations.length} problems</span>`}
       <div class="spacer"></div>
       <button class="btn" id="back">&larr; Change my inputs</button>
-      <button class="btn" id="again">Try again</button>
+      <button class="btn" id="again" title="A different timetable; locked periods still hold">Try a different one</button>
     </div>
+    ${pending ? `<div class="pendbar"><span>&#9998; You asked to move <b>${pending}</b>
+      period${pending===1?"":"s"}. Re-planning keeps everything else where it is unless it has to move.</span>
+      <div class="spacer"></div>
+      <button class="btn primary" id="replan">Re-plan now</button></div>` : ""}
     <div class="tabs">${Object.entries(TABS).map(([k,v]) =>
       `<button class="tab ${k===tab?"on":""}" data-tab="${k}">${v}</button>`).join("")}</div>
     <div class="view" id="rview"></div>
@@ -1057,28 +1156,65 @@ function headRow(grid) {
       <span class="sub">${esc(p.start)}</span></th>`).join("") + "</tr>";
 }
 
+function changeNote(d) {
+  const ch = d.changes;
+  if (!ch) return "";
+  const moved = ch.removed.length, rooms = ch.room_changed.length;
+  if (!moved && !rooms) return `<div class="note ok"><span class="ico">&#10003;</span><span>
+      <b>Nothing moved.</b> All ${ch.total} class-periods of the previous timetable are where they were.</span></div>`;
+  return `<div class="note warn"><span class="ico">&#8635;</span><span>
+      <b>Compared with the previous timetable:</b> ${ch.kept} of ${ch.total} class-periods kept,
+      <b>${moved}</b> moved${rooms ? `, ${rooms} changed room` : ""} — outlined below.
+      ${ch.classes_affected.length ? `<br>Classes affected: ${esc(ch.classes_affected.map(groupName).join(", "))}.` : ""}
+      ${ch.staff_affected.length ? `<br>Teachers to tell: ${esc(ch.staff_affected.join(", "))}.` : ""}
+      ${ch.dropped.length ? `<br>${ch.dropped.length} row(s) of the old timetable no longer match the data and were skipped.` : ""}
+    </span></div>`;
+}
+
+function actionBar() {
+  if (!picked) return `<p class="help" style="color:var(--muted);font-size:13px;margin:0 0 12px">
+      Click any period to <b>lock</b> it in place or <b>move it elsewhere</b>; then re-plan and
+      everything else stays put.</p>`;
+  const {group, course, day, period} = picked;
+  const isLocked = lockedKeys().has(slotKey(group, course, day, period));
+  return `<div class="actionbar"><span><b>${esc(course)}</b> · ${esc(groupName(group))} ·
+      ${esc(day)} period ${period}</span><div class="spacer"></div>
+    <button class="btn tiny" data-act="lock">${isLocked ? "&#128275; Unlock" : "&#128274; Lock here"}</button>
+    <button class="btn tiny" data-act="move">Move it elsewhere</button>
+    <button class="btn tiny" data-act="close">&times;</button></div>`;
+}
+
 function tabClasses() {
   const d = result, grid = d.instance.grid, at = {};
+  const locks = lockedKeys();
   d.meetings.forEach(m => (at[`${m.group}|${m.day}|${m.period}`] ??= []).push(m));
-  return `<div class="legend">
+  return changeNote(d) + actionBar() + `<div class="legend">
       <span><i class="sw" style="background:#fff"></i> theory</span>
       <span><i class="sw" style="background:var(--lab)"></i> lab</span>
       <span><i class="sw" style="background:var(--activity)"></i> activity</span>
       <span><i class="sw" style="background:var(--free)"></i> free</span>
+      <span>&#128274; locked</span>
+      ${d.changes ? `<span><i class="sw" style="box-shadow:inset 0 0 0 2px var(--amber)"></i> changed</span>` : ""}
     </div>` + d.instance.groups.map(g => {
     const rows = grid.days.map(day => `<tr><td class="day">${esc(day)}</td>` +
       grid.periods.map(p => {
         const brk = grid.breaks.includes(p.id) ? " brk" : "";
         const got = at[`${g.id}|${day}|${p.id}`];
         if (!got) return `<td class="free${brk}">·</td>`;
-        return `<td class="${esc(got[0].kind)}${brk}" title="${esc(got[0].title)}">` +
-          got.sort((a,b)=>a.batch-b.batch).map(m =>
-            `<span class="code">${esc(m.course)}${m.batches>1?` B${m.batch}`:""}</span>
+        const key = slotKey(g.id, got[0].course, day, p.id);
+        const sel = picked && slotKey(picked.group, picked.course, picked.day, picked.period) === key;
+        const chg = got.some(m => m.changed) ? " chg" : "";
+        return `<td class="${esc(got[0].kind)}${brk} pick${chg}${sel?" sel":""}" title="${esc(got[0].title)}"
+            data-pick="${esc(g.id)}|${esc(got[0].course)}|${esc(day)}|${p.id}">` +
+          got.sort((a,b)=>a.batch-b.batch).map((m, i) =>
+            `<span class="code">${esc(m.course)}${m.batches>1?` B${m.batch}`:""}${
+              i === 0 && locks.has(key) ? '<span class="lock">&#128274;</span>' : ""}</span>
              <span class="sub">${esc(m.room)}</span>
              <span class="sub">${esc(m.staff.join(", "))}</span>`).join('<hr class="split">') + `</td>`;
       }).join("") + "</tr>").join("");
     return `<div class="gtitle">${esc(g.name)}
-      <small>— ${g.demand} periods taught, ${grid.n_slots - g.demand} free</small></div>
+      <small>— ${g.demand} periods taught, ${grid.n_slots - g.demand} free${
+        g.home_room ? ` · home room ${esc(g.home_room)}` : ""}</small></div>
       <table class="tt">${headRow(grid)}${rows}</table>`;
   }).join("");
 }
@@ -1174,9 +1310,10 @@ function tabQuality() {
 function tabDownload() {
   const d = result;
   return `<p style="color:var(--muted);font-size:13.5px;margin-bottom:16px">
-      Check it over below, then save it. The <b>web page</b> keeps the colours and
-      prints nicely; the <b>spreadsheet</b> has one row per class so you can sort
-      and filter it.</p>
+      Check it over below, then save it. The <b>web page</b> has every class, every
+      teacher and every room on its own printed sheet, plus the workload summary — open
+      it and use your browser's <b>Print → Save as PDF</b>. The <b>spreadsheet</b> has
+      one row per period; keep it — it is what you load to re-plan this timetable later.</p>
     <div class="btnrow" style="margin-bottom:18px">
       <button class="btn primary" onclick="location.assign('/api/result/${d.id}/timetable.html?download=1')">
         Download web page</button>
@@ -1211,6 +1348,7 @@ function collectStaff(prev) {
     kind: $("s_kind").value,
     unavailable: [...off, ...other],
     max_periods_per_day: +$("s_max").value || 6,
+    max_consecutive: +$("s_run").value || 0,
   };
 }
 function collectGroup(prev) {
@@ -1222,6 +1360,7 @@ function collectGroup(prev) {
     id: prev ? prev.id : slug(name, taken),
     name,
     strength: +$("g_str").value || 40,
+    home_room: $("g_home").value || undefined,
   };
 }
 function collectCourse(prev) {
@@ -1236,11 +1375,17 @@ function collectCourse(prev) {
   const sections = kind === "lab"
     ? picks.map(id => ({staff:[id], room_kind:roomKind}))
     : [{staff:[picks[0]].filter(Boolean), room_kind:roomKind}];
+  const {room: _r, rooms: _rs, ...rest} = prev || {};
+  const fixed = $("c_room").value;
+  const fixedRoom = S.rooms.find(r => r.id === fixed);
+  // a fixed room decides the kind of room too (a theory subject held in a lab)
+  if (fixedRoom) sections.forEach(x => x.room_kind = fixedRoom.kind === "lab" ? "lab" : "classroom");
   return {
-    ...(prev || {}),
+    ...rest,
     code, title: $("c_title").value.trim() || code,
     group: $("c_group").value, kind, hours,
     sections: sections.length ? sections : [{staff:[], room_kind:roomKind}],
+    ...(fixed ? {rooms: [fixed]} : {}),
   };
 }
 
@@ -1258,22 +1403,38 @@ async function runSolve(checkOnly) {
             <b>Nothing obviously impossible.</b> Go ahead and generate.</span></div>`;
       return;
     }
-    const d = await api("/api/solve", {instance: S, time: effort, seed: Math.floor(Math.random()*1e6)});
+    const effortNow = document.querySelector("#effort") ? effort : (runSolve.lastEffort || 60);
+    runSolve.lastEffort = effortNow;
+    const base = baselineRows();
+    const d = await api("/api/solve", {instance: S, time: effortNow,
+      seed: Math.floor(Math.random()*1e6), baseline: base.length ? base : null});
+    if (!d.ok) {
+      // a re-plan started from the results page: go back to Generate to explain
+      if (!$("genmsg")) { result = null; step = 5; render(); }
+    }
     if (!d.ok && d.stage === "preflight") {
       $("genmsg").innerHTML = problemList("This cannot be scheduled — one of these " +
         "has to change first:", d.problems);
       return;
     }
     if (!d.ok) {
-      $("genmsg").innerHTML = `<div class="note bad"><span class="ico">&#9888;</span><span>
+      $("genmsg").innerHTML = d.status === "INFEASIBLE" && d.conflict && d.conflict.length
+        ? problemList("No timetable exists for this data. These rules cannot all hold " +
+            "together — relax at least one of them:", d.conflict)
+        : `<div class="note bad"><span class="ico">&#9888;</span><span>
         ${d.status === "INFEASIBLE"
-          ? "<b>No timetable exists for this data.</b> Something contradicts something else — the most common cause is a teacher with more hours than they have free slots."
+          ? "<b>No timetable exists for this data.</b> Something contradicts something else — the most common causes are a teacher with more hours than they have free slots, or too few rooms of one kind at the same time."
           : "<b>Ran out of time.</b> Try the Thorough setting, or reduce how tightly packed the week is."}</span></div>`;
       return;
     }
-    result = d; tab = "classes"; staffPick = null;
+    result = d; tab = "classes"; staffPick = null; picked = null; pending = 0;
+    // this timetable is now the one to stay close to next time
+    S.timetable = d.meetings.map(m => ({group: m.group, course: m.course, batch: m.batch,
+      day: m.day, period: m.period, room: m.room, locked: !!m.locked}));
+    stayClose = true;
     showResult();
   } catch (e) {
+    if (!$("genmsg")) { result = null; step = 5; render(); }
     $("genmsg").innerHTML = errorNote(e.message);
   } finally { done(); }
 }
@@ -1284,15 +1445,62 @@ document.body.addEventListener("click", async (ev) => {
   const t = ev.target.closest("[data-step],[data-go],[data-day],[data-addper],[data-delper]," +
     "[data-edit],[data-del],[data-save],[data-cancel],[data-off],[data-effort]," +
     "[data-tpl],[data-imp],[data-open-sample],[data-open-saved],[data-del-saved]," +
-    "[data-tab],#back,#again,#btncheck,#btngen,#save,#download,#open,#reset");
+    "[data-tab],#back,#again,#btncheck,#btngen,#save,#download,#open,#reset," +
+    "[data-pick],[data-act],#replan,[data-close],[data-unlockall],[data-loadprev]," +
+    "[data-forgetprev],[data-unforbid]");
   if (!t) return;
+
+  /* the result grid: lock a period, or ask for it to move */
+  if (t.dataset.pick) {
+    const [group, course, day, period] = t.dataset.pick.split("|");
+    picked = {group, course, day, period: +period};
+    return drawTab();
+  }
+  if (t.dataset.act) {
+    const a = t.dataset.act;
+    if (a === "close" || !picked) { picked = null; return drawTab(); }
+    const {group, course, day, period} = picked;
+    const key = slotKey(group, course, day, period);
+    const rows = (S.timetable || []).filter(r => slotKey(r.group, r.course, r.day, r.period) === key);
+    if (a === "lock") {
+      const to = !rows.every(r => r.locked);
+      rows.forEach(r => r.locked = to);
+      toast(to ? `${course} locked at ${day} P${period}.` : `${course} unlocked.`);
+    }
+    if (a === "move") {
+      const c = S.courses.find(x => x.group === group && x.code === course);
+      if (c) {
+        rows.forEach(r => r.locked = false);
+        c.forbid = [...new Set([...(c.forbid || []), `${day}:${period}`])];
+        pending++;
+        toast(`${course} will move off ${day} P${period} when you re-plan.`);
+      }
+    }
+    picked = null; return showResult();
+  }
+  if (t.id === "replan") { stayClose = true; return runSolve(false); }
+
+  /* the previous timetable, on the Generate step */
+  if (t.dataset.close !== undefined) { stayClose = t.dataset.close === "1"; return render(); }
+  if (t.dataset.unlockall) { (S.timetable || []).forEach(r => r.locked = false); return render(); }
+  if (t.dataset.forgetprev) {
+    if (!confirm("Forget the previous timetable? The next one will be made from scratch.")) return;
+    delete S.timetable; return render();
+  }
+  if (t.dataset.loadprev) return pickFile("prev");
+  if (t.dataset.unforbid) {
+    const [ci, fi] = t.dataset.unforbid.split(":").map(Number);
+    S.courses[ci].forbid.splice(fi, 1);
+    if (!S.courses[ci].forbid.length) delete S.courses[ci].forbid;
+    return render();
+  }
 
   /* navigation */
   if (t.dataset.step !== undefined) { step = +t.dataset.step; editing = null; return render(); }
   if (t.dataset.go   !== undefined) { step = +t.dataset.go;   editing = null; return render(); }
   if (t.dataset.tab) { tab = t.dataset.tab; return drawTab(); }
   if (t.id === "back")  { result = null; step = 5; return render(); }
-  if (t.id === "again") { result = null; step = 5; render(); return runSolve(false); }
+  if (t.id === "again") { stayClose = false; return runSolve(false); }
 
   /* week shape */
   if (t.dataset.day) {
@@ -1436,7 +1644,7 @@ function normalise(raw) {
 let pickMode = null, pickSection = null;
 function pickFile(mode, section) {
   pickMode = mode; pickSection = section;
-  $("filepick").accept = mode === "csv" ? ".csv,text/csv" : ".yaml,.yml";
+  $("filepick").accept = mode === "yaml" ? ".yaml,.yml" : ".csv,text/csv";
   $("filepick").click();
 }
 
@@ -1445,6 +1653,18 @@ $("filepick").onchange = async (ev) => {
   ev.target.value = "";
   if (!f) return;
   const text = await f.text();
+  if (pickMode === "prev") {
+    const rows = parseCSV(text);
+    const need = ["group","course","day","period"];
+    if (!rows.length || !need.every(k => k in rows[0]))
+      return toast("That file is not a timetable export — it needs the columns " + need.join(", ") + ".", true);
+    S.timetable = rows.map(r => ({group: r.group, course: r.course, batch: +r.batch || 1,
+      day: (r.day || "").toUpperCase(), period: +r.period, room: r.room || "",
+      locked: ["1","y","yes","true","locked","x"].includes((r.locked || "").toLowerCase())}));
+    stayClose = true;
+    toast(`Loaded ${rows.length} rows from ${f.name}. Generating will stay close to it.`);
+    return render();
+  }
   if (pickMode === "csv") {
     const {added, problems} = importRows(pickSection, parseCSV(text));
     render();

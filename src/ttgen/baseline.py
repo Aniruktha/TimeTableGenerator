@@ -87,7 +87,7 @@ def load(path: str | Path) -> list[Entry]:
     """A CSV export, or a setup YAML carrying a ``timetable:`` list."""
     path = Path(path)
     if path.suffix.lower() in (".yaml", ".yml"):
-        raw = yaml.safe_load(path.read_text()) or {}
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         rows = raw.get("timetable") or []
         if not rows:
             raise ValueError(f"{path} has no `timetable:` section to use as a baseline")

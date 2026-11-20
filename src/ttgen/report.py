@@ -420,4 +420,4 @@ def to_html(inst: Instance, sol: Solution, path: str | Path) -> None:
         "<h2 class='part'>Summary</h2>",
         _workload(inst, sol),
     ]
-    Path(path).write_text("\n".join(out))
+    Path(path).write_text("\n".join(out), encoding="utf-8")

@@ -22,7 +22,7 @@ from . import baseline as baseline_mod
 from . import report, store, verify
 from .accounts import current_user, require_admin
 from .data import Instance
-from .model import Solution
+from .types import Solution
 from .store import StoreError, User
 
 
@@ -31,7 +31,7 @@ def _render(inst: Instance, sol: Solution, locked: set) -> tuple[str, str]:
         csv_path, html_path = Path(tmp) / "t.csv", Path(tmp) / "t.html"
         report.to_csv(inst, sol, csv_path, locked=locked)
         report.to_html(inst, sol, html_path)
-        return csv_path.read_text(), html_path.read_text()
+        return csv_path.read_text(encoding="utf-8"), html_path.read_text(encoding="utf-8")
 
 
 def snapshot(inst: Instance, sol: Solution, locked: set) -> dict[str, Any]:

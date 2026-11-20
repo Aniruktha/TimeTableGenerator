@@ -223,6 +223,9 @@ def cmd_web(args) -> int:
     import socket
 
     with socket.socket() as probe:
+        # same option uvicorn sets, so a port left in TIME_WAIT by the last
+        # run is not mistaken for one that something else is using
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind((args.host, args.port))
         except OSError:
@@ -231,16 +234,94 @@ def cmd_web(args) -> int:
                 f"running there.  Try [bold]tt web --port {args.port + 1}[/bold]."
             )
             return 2
+    from . import accounts, settings, store
+
+    made = accounts.bootstrap_from_env()
+    shown = "localhost" if args.host in ("0.0.0.0", "::") else args.host
     console.print(
-        f"[bold]timetable generator[/bold] on [cyan]http://{args.host}:{args.port}[/cyan]"
-        "  [dim]ctrl-c to stop[/dim]"
+        f"[bold]{settings.PRODUCT}[/bold] {settings.get().version} on "
+        f"[cyan]http://{shown}:{args.port}[/cyan]  [dim]ctrl-c to stop[/dim]"
     )
-    serve(host=args.host, port=args.port, reload=args.reload)
+    console.print(f"[dim]data: {settings.get().state_dir}[/dim]")
+    if made:
+        console.print(f"created administrator [bold]{made}[/bold] from the environment")
+    elif store.count_users() == 0:
+        console.print(
+            "[yellow]no accounts yet[/yellow] -- open the address above to create the "
+            "administrator, or run [bold]tt user add --role admin USERNAME[/bold]"
+        )
+    serve(host=args.host, port=args.port, reload=args.reload,
+          proxy=getattr(args, "proxy", False))
+    return 0
+
+
+def cmd_user(args) -> int:
+    """Account management from the server's shell -- the way back in if every
+    administrator password is lost."""
+    import getpass
+
+    from . import store
+
+    if args.action == "list":
+        t = Table(box=None)
+        for col in ("username", "name", "role", "linked to", "status"):
+            t.add_column(col)
+        for u in store.list_users():
+            status = "disabled" if not u.active else ("must change password" if u.must_change else "active")
+            t.add_row(u.username, u.name, u.role, u.staff_id or u.group_id or "", status)
+        console.print(t)
+        return 0
+
+    username = (args.username or "").strip().lower()
+    if not username:
+        console.print("[red]give a username[/red]")
+        return 2
+
+    def ask() -> str:
+        while True:
+            pw = getpass.getpass("password: ")
+            if problem := store.password_problem(pw):
+                console.print(f"[red]{problem}[/red]")
+                continue
+            if getpass.getpass("again: ") != pw:
+                console.print("[red]those do not match[/red]")
+                continue
+            return pw
+
+    if args.action == "add":
+        if args.role == "teacher" and not args.staff:
+            console.print("[red]a teacher needs --staff STAFF_ID[/red]")
+            return 2
+        if args.role == "student" and not args.group:
+            console.print("[red]a student needs --group CLASS_ID[/red]")
+            return 2
+        try:
+            store.create_user(username, args.name or username, args.role, ask(),
+                              staff_id=args.staff, group_id=args.group,
+                              must_change=args.role != "admin")
+        except store.StoreError as exc:
+            console.print(f"[red]{exc}[/red]")
+            return 1
+        console.print(f"created {args.role} [bold]{username}[/bold]")
+        return 0
+
+    user = store.find_user(username)
+    if user is None:
+        console.print(f"[red]no account named {username}[/red]")
+        return 1
+    if args.action == "passwd":
+        store.set_password(user.id, ask(), must_change=False)
+        if not user.active:
+            store.update_user(user.id, active=True)
+        console.print(f"password changed for [bold]{username}[/bold]; signed out everywhere")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="tt", description="AMCS timetable generator")
+    from . import __version__
+
+    ap = argparse.ArgumentParser(prog="tt", description="college timetable generator")
+    ap.add_argument("--version", action="version", version=f"tt {__version__}")
     ap.add_argument("--data", default=DEFAULT_DATA, help=f"instance YAML (default {DEFAULT_DATA})")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -267,12 +348,29 @@ def main(argv: list[str] | None = None) -> int:
     w.add_argument("--port", type=int, default=8000, help="port")
     w.add_argument("--reload", action="store_true", help="restart on code changes")
 
+    sv = sub.add_parser("serve", help="run the site for real: every address, behind a proxy")
+    sv.add_argument("--host", default="0.0.0.0", help="bind address (default all)")
+    sv.add_argument("--port", type=int, default=8000, help="port")
+    sv.add_argument("--proxy", action="store_true",
+                    help="trust X-Forwarded-* headers from a reverse proxy")
+    sv.set_defaults(reload=False)
+
+    u = sub.add_parser("user", help="manage sign-in accounts from the shell")
+    u.add_argument("action", choices=["add", "passwd", "list"])
+    u.add_argument("username", nargs="?")
+    u.add_argument("--role", choices=["admin", "teacher", "student"], default="admin")
+    u.add_argument("--name", help="display name")
+    u.add_argument("--staff", help="teacher: staff id in the timetable data")
+    u.add_argument("--group", help="student: class id in the timetable data")
+
     args = ap.parse_args(argv)
     return {
         "check": cmd_check,
         "workload": cmd_workload,
         "solve": cmd_solve,
         "web": cmd_web,
+        "serve": cmd_web,
+        "user": cmd_user,
     }[args.cmd](args)
 
 

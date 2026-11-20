@@ -1,7 +1,7 @@
 [project]
 name = "ttgen"
-version = "0.1.0"
-description = "CP-SAT timetable generator for the AMCS department, PSG College of Technology"
+version = "1.0.0"
+description = "College timetable generator: CP-SAT solver, web builder, and sign-in portal for admins, teachers and students"
 readme = "README.md"
 authors = [
     { name = "Aniruktha", email = "aniruktha@trainery.one" }

@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS publications (
     note         TEXT NOT NULL DEFAULT '',
     published_at INTEGER NOT NULL,
     published_by TEXT NOT NULL,
-    current      INTEGER NOT NULL DEFAULT 0,
+    current      INTEGER NOT NULL DEFAULT 0,   -- live for its department
+    department   TEXT NOT NULL DEFAULT '' COLLATE NOCASE,
     payload      TEXT NOT NULL,     -- JSON: grid, classes, staff, rooms, meetings
     setup        TEXT,              -- JSON: the builder setup it came from
     csv          TEXT NOT NULL,
@@ -80,6 +81,7 @@ def connect() -> Iterator[sqlite3.Connection]:
         if str(path) not in _ready:
             con.execute("PRAGMA journal_mode = WAL")
             con.executescript(SCHEMA)
+            _migrate(con)
             _ready.add(str(path))
         yield con
         con.commit()
@@ -88,6 +90,16 @@ def connect() -> Iterator[sqlite3.Connection]:
         raise
     finally:
         con.close()
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    """Bring a database made by an older version up to date, in place."""
+    cols = {r["name"] for r in con.execute("PRAGMA table_info(publications)")}
+    if "department" not in cols:
+        # 1.0 had one live timetable for everyone; it becomes the timetable
+        # of an unnamed department and stays live.
+        con.execute("ALTER TABLE publications ADD COLUMN department "
+                    "TEXT NOT NULL DEFAULT '' COLLATE NOCASE")
 
 
 def now() -> int:
@@ -343,23 +355,32 @@ def end_session(token: str | None) -> None:
 # Published timetables
 # --------------------------------------------------------------------------- #
 
-_META = "id, title, note, published_at, published_by, current"
+_META = "id, title, note, published_at, published_by, current, department"
 
 
 def _meta(row: sqlite3.Row) -> dict[str, Any]:
-    return {k: row[k] for k in ("id", "title", "note", "published_at", "published_by")} | {
-        "current": bool(row["current"])
+    return {k: row[k] for k in ("id", "title", "note", "published_at", "published_by",
+                                "department")} | {"current": bool(row["current"])}
+
+
+def _full(row: sqlite3.Row) -> dict[str, Any]:
+    return _meta(row) | {
+        "payload": json.loads(row["payload"]),
+        "setup": json.loads(row["setup"]) if row["setup"] else None,
+        "csv": row["csv"],
+        "html": row["html"],
     }
 
 
 def add_publication(title: str, note: str, by: str, payload: dict, setup: dict | None,
-                    csv: str, html: str) -> dict[str, Any]:
+                    csv: str, html: str, department: str = "") -> dict[str, Any]:
+    """Store a new version and make it live for its department."""
     with connect() as con:
-        con.execute("UPDATE publications SET current = 0")
+        con.execute("UPDATE publications SET current = 0 WHERE department = ?", (department,))
         cur = con.execute(
             "INSERT INTO publications (title, note, published_at, published_by, current,"
-            " payload, setup, csv, html) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)",
-            (title, note, now(), by, json.dumps(payload),
+            " department, payload, setup, csv, html) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)",
+            (title, note, now(), by, department, json.dumps(payload),
              json.dumps(setup) if setup is not None else None, csv, html),
         )
         row = con.execute(f"SELECT {_META} FROM publications WHERE id = ?",
@@ -369,7 +390,8 @@ def add_publication(title: str, note: str, by: str, payload: dict, setup: dict |
 
 def list_publications() -> list[dict[str, Any]]:
     with connect() as con:
-        rows = con.execute(f"SELECT {_META}, payload FROM publications ORDER BY id DESC").fetchall()
+        rows = con.execute(f"SELECT {_META}, payload FROM publications "
+                           "ORDER BY department COLLATE NOCASE, id DESC").fetchall()
     out = []
     for r in rows:
         m = _meta(r)
@@ -378,34 +400,35 @@ def list_publications() -> list[dict[str, Any]]:
     return out
 
 
-def get_publication(pub_id: int | None = None) -> dict[str, Any] | None:
-    """One publication in full; with no id, the current one."""
+def get_publication(pub_id: int) -> dict[str, Any] | None:
     with connect() as con:
-        if pub_id is None:
-            row = con.execute("SELECT * FROM publications WHERE current = 1").fetchone()
-        else:
-            row = con.execute("SELECT * FROM publications WHERE id = ?", (pub_id,)).fetchone()
-    if row is None:
-        return None
-    return _meta(row) | {
-        "payload": json.loads(row["payload"]),
-        "setup": json.loads(row["setup"]) if row["setup"] else None,
-        "csv": row["csv"],
-        "html": row["html"],
-    }
+        row = con.execute("SELECT * FROM publications WHERE id = ?", (pub_id,)).fetchone()
+    return _full(row) if row else None
+
+
+def live_publications() -> list[dict[str, Any]]:
+    """Every department's live version, in full."""
+    with connect() as con:
+        rows = con.execute("SELECT * FROM publications WHERE current = 1 "
+                           "ORDER BY department COLLATE NOCASE").fetchall()
+    return [_full(r) for r in rows]
 
 
 def set_current(pub_id: int) -> None:
+    """Make a version live for its department (the department's previous one stops)."""
     with connect() as con:
-        if not con.execute("SELECT 1 FROM publications WHERE id = ?", (pub_id,)).fetchone():
+        row = con.execute("SELECT department FROM publications WHERE id = ?",
+                          (pub_id,)).fetchone()
+        if row is None:
             raise StoreError("that version no longer exists")
-        con.execute("UPDATE publications SET current = (id = ?)", (pub_id,))
+        con.execute("UPDATE publications SET current = (id = ?) WHERE department = ?",
+                    (pub_id, row["department"]))
 
 
-def withdraw() -> None:
-    """Nothing current: students and staff see 'not published yet'."""
+def withdraw(department: str) -> None:
+    """Nothing live for one department: its people see 'not published yet'."""
     with connect() as con:
-        con.execute("UPDATE publications SET current = 0")
+        con.execute("UPDATE publications SET current = 0 WHERE department = ?", (department,))
 
 
 def delete_publication(pub_id: int) -> None:
@@ -414,5 +437,5 @@ def delete_publication(pub_id: int) -> None:
         if row is None:
             raise StoreError("that version no longer exists")
         if row["current"]:
-            raise StoreError("that is the live timetable -- make another version live first")
+            raise StoreError("that is a live timetable -- make another version live first")
         con.execute("DELETE FROM publications WHERE id = ?", (pub_id,))

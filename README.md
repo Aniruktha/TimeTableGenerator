@@ -305,6 +305,7 @@ and `tt check` tries to say why in words before the solver ever runs.
 | H16 | College-wide blocked slots stay empty | `model._hard_availability` |
 | H17 | No staff member teaches more than `max_consecutive` periods in a row (0 = no limit; short breaks don't reset the count) | `model._hard_staff_clash` |
 | H18 | Locked periods of a baseline stay in their slot and room | `model._baseline` |
+| H19 | A teacher or room shared with another department keeps clear of every period it has in that department's live timetable, matched by clock time. Its daily cap and longest run count those periods too | `elsewhere`, `model._hard_availability`, `model._hard_rooms` |
 
 There is no H13 any more: it bounded a class's periods per day, which is a
 per-day free-period rule. Free periods are counted per week (see above).

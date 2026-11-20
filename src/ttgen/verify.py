@@ -87,6 +87,19 @@ def verify(inst: Instance, sol: Solution, baseline=None) -> list[str]:
                         f"H12 {c.uid}: {inst.staff[sid].name} is unavailable at "
                         f"{slot[0]} P{slot[1]}"
                     )
+                for slot in sorted(scheduled & set(inst.taken_staff.get(sid, {}))):
+                    t = inst.taken_staff[sid][slot]
+                    v.append(
+                        f"H19 {c.uid}: {inst.staff[sid].name} at {slot[0]} P{slot[1]} is "
+                        f"already teaching {t.what} in {t.department}"
+                    )
+            for mt in got:
+                t = inst.taken_rooms.get(mt.room, {}).get((mt.day, mt.period))
+                if t:
+                    v.append(
+                        f"H19 {c.uid}: room {mt.room} at {mt.day} P{mt.period} is "
+                        f"already used by {t.what} in {t.department}"
+                    )
 
             # H6 room suitability
             need_seats = inst.seats_for(c, s)
@@ -156,13 +169,20 @@ def verify(inst: Instance, sol: Solution, baseline=None) -> list[str]:
             v.append(
                 f"H4 {inst.staff[sid].name} is double-booked on {day} P{p}: {sorted(what)}"
             )
+    # Periods a shared teacher has in other departments count towards their
+    # daily cap and their runs exactly as periods here do.
+    elsewhere = {(sid, d, p) for sid, slots in inst.taken_staff.items() for d, p in slots}
+    teaching = set(staff_slots) | elsewhere
     per_staff_day: dict[tuple[str, str], int] = defaultdict(int)
-    for (sid, day, _p) in staff_slots:
-        per_staff_day[sid, day] += 1
+    for (sid, day, _p) in teaching:
+        if sid in inst.staff:
+            per_staff_day[sid, day] += 1
     for (sid, day), n in per_staff_day.items():
         cap = inst.staff[sid].max_periods_per_day
-        if n > cap:
-            v.append(f"H4 {inst.staff[sid].name}: {n} periods on {day}, cap is {cap}")
+        if n > cap and any(k[0] == sid and k[1] == day for k in staff_slots):
+            v.append(f"H4 {inst.staff[sid].name}: {n} periods on {day}"
+                     f"{' (with other departments)' if any((sid, day, q) in elsewhere for q in grid.periods) else ''}"
+                     f", cap is {cap}")
 
     # H17 longest unbroken run of teaching per staff member
     for sid, member in inst.staff.items():
@@ -172,7 +192,7 @@ def verify(inst: Instance, sol: Solution, baseline=None) -> list[str]:
         for day in grid.days:
             run = 0
             for p in grid.periods:
-                run = run + 1 if (sid, day, p) in staff_slots else 0
+                run = run + 1 if (sid, day, p) in teaching else 0
                 if run > k:
                     v.append(f"H17 {member.name}: more than {k} periods in a row on {day}")
                     break

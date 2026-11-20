@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 from . import __version__, accounts, publish, settings, store
 from . import baseline as baseline_mod
 from . import data as data_mod
-from . import preflight, report, verify
+from . import elsewhere, preflight, report, verify
 from .accounts import require_admin
 from .config import Weights
 from .data import Instance, InstanceError
@@ -314,6 +314,7 @@ def _grid_payload(inst: Instance) -> dict[str, Any]:
 def _instance_payload(inst: Instance) -> dict[str, Any]:
     return {
         "name": inst.name,
+        "department": inst.department,
         "grid": _grid_payload(inst),
         "groups": [
             {
@@ -368,6 +369,7 @@ def _instance_payload(inst: Instance) -> dict[str, Any]:
 @api.post("/api/inspect")
 def inspect(body: InstanceBody) -> dict[str, Any]:
     inst = _parse(body)
+    inst, found = elsewhere.apply(inst, publish.others(inst.department))
     problems = preflight.check(inst)
     workload = [
         {
@@ -386,6 +388,7 @@ def inspect(body: InstanceBody) -> dict[str, Any]:
         "problems": problems,
         "feasible_so_far": not problems,
         "workload": workload,
+        "elsewhere": found.summary({sid: m.name for sid, m in inst.staff.items()}),
     }
 
 
@@ -429,6 +432,10 @@ def solve(body: SolveBody) -> dict[str, Any]:
     page stays responsive.
     """
     inst = _parse(body)
+    # Shared teachers and rooms keep clear of what other departments' live
+    # timetables already give them.
+    inst, found = elsewhere.apply(inst, publish.others(inst.department))
+    shared = found.summary({sid: m.name for sid, m in inst.staff.items()})
 
     entries = None
     if body.baseline:
@@ -446,6 +453,7 @@ def solve(body: SolveBody) -> dict[str, Any]:
             "stage": "preflight",
             "problems": problems,
             "instance": _instance_payload(inst),
+            "elsewhere": shared,
         }
 
     time_limit = max(1.0, min(float(body.time), MAX_TIME_LIMIT))
@@ -464,6 +472,7 @@ def solve(body: SolveBody) -> dict[str, Any]:
             # the rules that cannot all hold, when the solver could pin them down
             "conflict": why,
             "instance": _instance_payload(inst),
+            "elsewhere": shared,
         }
 
     violations = verify.verify(inst, sol, baseline=entries)
@@ -504,6 +513,7 @@ def solve(body: SolveBody) -> dict[str, Any]:
         "penalties": penalties,
         "total_cost": total,
         "changes": changes,
+        "elsewhere": shared,
         "instance": _instance_payload(inst),
         "meetings": [
             {

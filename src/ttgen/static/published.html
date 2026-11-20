@@ -16,13 +16,16 @@
 .livecard .side .btn{justify-content:flex-start}
 .verlist td b{display:block}
 .verlist td small{color:var(--muted)}
+#live{display:grid;gap:14px}
+.dept{font-size:12.5px;font-weight:600;color:var(--brand-ink);background:var(--brand-soft);
+  border-radius:6px;padding:2px 8px;display:inline-block}
 </style>
 </head>
 <body>
 <main class="page">
   <div class="phead">
     <div><h1>Published timetables</h1>
-      <p>What students and teachers see. Only the live version is shown to them; older versions are kept so you can roll back.</p></div>
+      <p>What students and teachers see. Each department has one live version; older versions are kept so you can roll back.</p></div>
   </div>
   <div id="live"><div class="loading"><span class="spinner"></span></div></div>
   <h2 style="font-size:16px;margin:30px 0 12px">All versions</h2>
@@ -42,12 +45,13 @@ const ICON = {
 
 function stat(v, l) { return `<div class="stat"><b>${v ?? "—"}</b><span>${l}</span></div>`; }
 
-async function load() {
-  const {publications: all} = await api("/api/publications");
-  const live = all.find(p => p.current);
-  $("live").innerHTML = live ? `<div class="card livecard">
+const dname = (p) => p.department || "No department";
+
+function liveCard(live) {
+  return `<div class="card livecard">
       <div>
         <span class="tag live"><span class="dot"></span> Live now</span>
+        <span class="dept">${esc(dname(live))}</span>
         <h2>${esc(live.title)}</h2>
         <p class="meta">Version ${live.id} · published ${TT.dateTime(live.published_at)} by ${esc(live.published_by)}</p>
         ${live.note ? `<p style="margin-top:10px">${esc(live.note)}</p>` : ""}
@@ -59,22 +63,34 @@ async function load() {
         <a class="btn" href="/api/publications/${live.id}/timetable.html" target="_blank" rel="noopener">${ICON.print} Print every sheet</a>
         <a class="btn" href="/api/publications/${live.id}/timetable.csv">${ICON.sheet} Download spreadsheet</a>
         <a class="btn" href="/admin?from=${live.id}">${ICON.edit} Change it in Build</a>
-        <button class="btn danger" data-withdraw>Take it down</button>
-      </div></div>`
+        <button class="btn danger" data-withdraw="${esc(live.department)}">Take it down</button>
+      </div></div>`;
+}
+
+async function load() {
+  const {publications: all} = await api("/api/publications");
+  const live = all.filter(p => p.current);
+  const depts = new Set(all.map(p => p.department));
+  const idle = [...depts].filter(d => !live.some(p => p.department === d));
+  $("live").innerHTML = live.length
+    ? live.map(liveCard).join("") + (idle.length ? `<div class="note info">Nothing live for
+        ${idle.map(d => `<b>${esc(d || "No department")}</b>`).join(", ")} — their students and
+        teachers see “not published yet”. Make a version live below.</div>` : "")
     : `<div class="card"><div class="empty"><div class="ico">${ICON.eye}</div>
         <b>Nothing is live</b><p>${all.length ? "Students and teachers see “not published yet”. Make a version live below."
           : "Generate a timetable under <b>Build</b>, check it, then press <b>Publish</b>."}</p>
         ${all.length ? "" : `<div style="margin-top:18px"><a class="btn primary" href="/admin">Go to Build</a></div>`}</div></div>`;
 
   $("history").innerHTML = all.length ? `<div class="scroll-x"><table class="t verlist">
-      <tr><th>Version</th><th>Timetable</th><th>Published</th><th class="num">Classes</th><th class="num">Teachers</th><th></th></tr>
+      <tr><th>Version</th><th>Department</th><th>Timetable</th><th>Published</th><th class="num">Classes</th><th class="num">Teachers</th><th></th></tr>
       ${all.map(p => `<tr>
         <td><b>v${p.id}</b>${p.current ? `<span class="tag ok">live</span>` : ""}</td>
+        <td>${esc(dname(p))}</td>
         <td><b>${esc(p.title)}</b>${p.note ? `<small>${esc(p.note)}</small>` : ""}</td>
         <td>${TT.dateTime(p.published_at)}<br><small>${esc(p.published_by)}</small></td>
         <td class="num">${p.summary.classes ?? ""}</td><td class="num">${p.summary.teachers ?? ""}</td>
         <td class="act"><div class="btns" style="justify-content:flex-end">
-          ${p.current ? "" : `<button class="btn sm" data-live="${p.id}">Make live</button>`}
+          ${p.current ? "" : `<button class="btn sm" data-live="${p.id}" data-dept="${esc(dname(p))}">Make live</button>`}
           <a class="btn sm ghost" href="/api/publications/${p.id}/timetable.html" target="_blank" rel="noopener">Print</a>
           <a class="btn sm ghost" href="/api/publications/${p.id}/timetable.csv">CSV</a>
           <a class="btn sm ghost" href="/admin?from=${p.id}">Open</a>
@@ -89,7 +105,7 @@ document.addEventListener("click", async (ev) => {
   try {
     if (b.dataset.live) {
       const ok = await TT.dialog({title: `Make version ${b.dataset.live} live?`,
-        text: "Everyone will see this version from their next page load.",
+        text: `It replaces ${b.dataset.dept}'s live version from everyone's next page load. It is checked first against the other departments' live timetables, so a shared teacher or room is never in two places.`,
         actions: [{label: "Cancel"}, {label: "Make live", kind: "primary", value: true}]});
       if (!ok) return;
       await api(`/api/publications/${b.dataset.live}/live`, {method: "POST"});
@@ -104,12 +120,13 @@ document.addEventListener("click", async (ev) => {
       TT.toast("Deleted.");
     }
     if (b.hasAttribute("data-withdraw")) {
-      const ok = await TT.dialog({title: "Take the timetable down?",
-        text: "Students and teachers will see “not published yet” until you make a version live again. Nothing is deleted.",
+      const dept = b.dataset.withdraw, label = dept || "No department";
+      const ok = await TT.dialog({title: `Take ${label}'s timetable down?`,
+        text: `${label}'s students and teachers will see “not published yet” until you make a version live again. Other departments stay live. Nothing is deleted.`,
         actions: [{label: "Cancel"}, {label: "Take it down", kind: "primary danger", value: true}]});
       if (!ok) return;
-      await api("/api/publications/withdraw", {method: "POST"});
-      TT.toast("Taken down. No version is live.");
+      await api("/api/publications/withdraw", {method: "POST", body: {department: dept}});
+      TT.toast(`Taken down. Nothing is live for ${label}.`);
     }
     await load();
   } catch (e) { TT.toast(e.message, true); }

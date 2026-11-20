@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased: several departments
+
+- Each department has its own live timetable. Publishing, rolling back and
+  taking down affect only that department.
+- A department generated after others are live keeps the teachers and rooms
+  it shares with them clear of the periods they already have there (H19).
+  Departments are matched by clock time, so different bell timings still
+  line up. A shared teacher's daily cap and longest run count every
+  department.
+- Publishing and making a version live are refused if they would clash with
+  another department's live timetable. A class ID used by two departments is
+  refused too.
+- When no timetable fits around the other departments, the explanation names
+  the teacher or room and the department.
+- A teacher's portal shows one week across every department they teach in. A
+  student sees their own department's timetable.
+- The Build start page has a Department field. The AMCS sample is tagged
+  `AMCS`, and a made-up `second_dept_demo` sample shares three teachers and a
+  lab with it.
+- Databases from 1.0 are upgraded in place. The old live timetable stays live,
+  with no department.
+
 ## 1.0.0 — 2026-11-06
 
 First release meant to be run for real.

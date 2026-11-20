@@ -12,7 +12,8 @@ import copy
 import pytest
 
 from ttgen.data import InstanceError, from_dict
-from ttgen.model import Meeting, Solution, TimetableModel
+from ttgen.model import TimetableModel
+from ttgen.types import Meeting, Solution
 from ttgen.preflight import check
 from ttgen.verify import verify
 

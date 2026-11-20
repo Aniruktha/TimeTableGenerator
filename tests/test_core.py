@@ -16,7 +16,8 @@ import pytest
 from ttgen import baseline as bl
 from ttgen import report, web
 from ttgen.data import InstanceError, from_dict
-from ttgen.model import Meeting, Solution, TimetableModel, explain
+from ttgen.model import TimetableModel, explain
+from ttgen.types import Meeting, Solution
 from ttgen.preflight import check
 from ttgen.verify import verify
 

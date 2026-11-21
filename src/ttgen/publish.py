@@ -2,15 +2,20 @@
 
 A generated timetable is a draft held in memory.  Publishing freezes it: the
 meetings, the grid, the CSV and the printable HTML are written to the database
-as a numbered version and that version becomes *live*.  Teachers and students
-only ever see the live version, and only their own slice of it -- a teacher
-their own periods, a student their class.  Older versions stay so a mistake
-can be rolled back in one click.
+as a numbered version and that version becomes *live* for its department.
+Every department has its own live version; a college is the set of them.
+
+Teachers and students only ever see live versions, and only their own slice:
+a student their class, a teacher every period they teach in any department.
+Older versions stay so a mistake can be rolled back in one click.  Nothing
+goes live -- by publishing or by rolling back -- if it would put a shared
+teacher or room in two departments at once.
 """
 
 from __future__ import annotations
 
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +24,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from . import baseline as baseline_mod
-from . import report, store, verify
+from . import elsewhere, report, store, verify
 from .accounts import current_user, require_admin
 from .data import Instance
 from .types import Solution
@@ -81,7 +86,31 @@ class PublishBody(BaseModel):
     result_id: str
     title: str = ""
     note: str = ""
+    department: str = ""                   # blank: the one named in the setup
     setup: dict[str, Any] | None = None    # the builder's data, so it can be reopened
+
+
+def others(department: str) -> list[dict[str, Any]]:
+    """The live timetables of every department except `department`."""
+    return [p for p in store.live_publications()
+            if not elsewhere.same_department(p["department"], department)]
+
+
+# Checking for clashes and going live must be one step: two departments
+# published at the same moment would otherwise each pass the check against
+# the other's *old* state and go live clashing.  One process serves the site
+# (see DEPLOY), so a process lock is enough.
+_going_live = threading.Lock()
+
+
+def _refuse_clashes(payload: dict[str, Any], department: str, verb: str) -> None:
+    problems = elsewhere.clashes(payload, others(department))
+    if problems:
+        raise HTTPException(
+            409, f"this timetable cannot {verb} because it clashes with another "
+            "department's live timetable (generate it again so it keeps clear of "
+            "them): " + "; ".join(problems)
+        )
 
 
 @admin.post("")
@@ -89,22 +118,31 @@ def publish(body: PublishBody, user: User = Depends(require_admin)) -> dict[str,
     from .web import _lookup
 
     inst, sol, locked = _lookup(body.result_id)
+    department = elsewhere.clean_department(body.department or inst.department)
+    if not department:
+        raise HTTPException(400, "say which department this timetable is for")
     problems = verify.verify(inst, sol)
     if problems:
         raise HTTPException(
             400, "this timetable failed the independent check and cannot be published: "
             + "; ".join(problems[:5])
         )
+    payload = snapshot(inst, sol, locked)
     csv, html = _render(inst, sol, locked)
     # Reopening this version in Build must re-plan *from* it, so the setup
     # carries the published periods (and their locks) whatever the page sent.
     setup = dict(body.setup) if body.setup else None
     if setup is not None:
         setup["timetable"] = baseline_mod.to_rows(baseline_mod.from_meetings(sol.meetings, locked))
-    meta = store.add_publication(
-        (body.title or inst.name).strip()[:120], body.note.strip()[:500], user.name,
-        snapshot(inst, sol, locked), setup, csv, html,
-    )
+        setup["department"] = department
+    # Generated against the live timetables of the moment; another department
+    # may have gone live since, so check again against what is live *now*.
+    with _going_live:
+        _refuse_clashes(payload, department, "be published")
+        meta = store.add_publication(
+            (body.title or inst.name).strip()[:120], body.note.strip()[:500], user.name,
+            payload, setup, csv, html, department=department,
+        )
     return {"publication": meta}
 
 
@@ -122,16 +160,25 @@ def _get(pub_id: int) -> dict[str, Any]:
 
 @admin.post("/{pub_id}/live")
 def make_live(pub_id: int) -> dict[str, Any]:
-    try:
-        store.set_current(pub_id)
-    except StoreError as exc:
-        raise HTTPException(404, str(exc)) from exc
+    pub = _get(pub_id)
+    # An old version was fine next to the departments of its day; theirs may
+    # have changed since.
+    with _going_live:
+        _refuse_clashes(pub["payload"], pub["department"], "go live")
+        try:
+            store.set_current(pub_id)
+        except StoreError as exc:
+            raise HTTPException(404, str(exc)) from exc
     return {"live": pub_id}
 
 
+class WithdrawBody(BaseModel):
+    department: str = ""
+
+
 @admin.post("/withdraw")
-def withdraw() -> dict[str, Any]:
-    store.withdraw()
+def withdraw(body: WithdrawBody | None = None) -> dict[str, Any]:
+    store.withdraw(elsewhere.clean_department(body.department if body else ""))
     return {"live": None}
 
 
@@ -169,15 +216,21 @@ def download_html(pub_id: int, download: bool = False) -> Response:
 
 @admin.get("/linkables")
 def linkables() -> dict[str, Any]:
-    """Teachers and classes in the live timetable, for linking accounts to."""
-    pub = store.get_publication()
-    if pub is None:
-        return {"staff": [], "groups": [], "live": False}
-    inst = pub["payload"]["instance"]
+    """Teachers and classes in the live timetables, for linking accounts to."""
+    live = store.live_publications()
+    staff: dict[str, dict[str, Any]] = {}
+    groups: list[dict[str, Any]] = []
+    for pub in live:
+        inst = pub["payload"]["instance"]
+        for s in inst["staff"]:
+            staff.setdefault(s["id"], {"id": s["id"], "name": s["name"], "departments": []})
+            staff[s["id"]]["departments"].append(pub["department"])
+        groups += [{"id": g["id"], "name": g["name"], "department": pub["department"]}
+                   for g in inst["groups"]]
     return {
-        "live": True,
-        "staff": [{"id": s["id"], "name": s["name"]} for s in inst["staff"]],
-        "groups": [{"id": g["id"], "name": g["name"]} for g in inst["groups"]],
+        "live": bool(live),
+        "staff": sorted(staff.values(), key=lambda s: s["name"].casefold()),
+        "groups": groups,
     }
 
 
@@ -188,23 +241,60 @@ def linkables() -> dict[str, Any]:
 portal = APIRouter(prefix="/api/portal", tags=["portal"])
 
 
+def _meta(pub: dict[str, Any]) -> dict[str, Any]:
+    return {k: pub[k] for k in ("id", "title", "note", "published_at", "published_by",
+                                "department")}
+
+
+def _teaching(live: list[dict[str, Any]], staff_id: str) -> tuple[dict | None, list, list]:
+    """A teacher's week across every department, on one grid.
+
+    The grid is the one of the department they teach most in; periods in
+    departments with other timings are placed in the slot they overlap.
+    """
+    per = [(pub, [m for m in pub["payload"]["meetings"] if staff_id in m["staff_ids"]])
+           for pub in live]
+    per = [(pub, mine) for pub, mine in per if mine]
+    if not per:
+        return None, [], []
+    home = max(per, key=lambda x: len(x[1]))[0]
+    grid = home["payload"]["instance"]["grid"]
+    out = []
+    for pub, mine in per:
+        to_home = elsewhere.slot_map(pub["payload"]["instance"]["grid"], grid)
+        for m in mine:
+            if pub is home:
+                out.append(m | {"department": pub["department"]})
+                continue
+            hits = to_home.get((m["day"].upper(), int(m["period"])), [])
+            if hits:
+                d, p = hits[0]
+                out.append(m | {"day": d, "period": p, "department": pub["department"]})
+    return home, out, [pb for pb, _ in per]
+
+
 @portal.get("")
 def my_timetable(group: str | None = None, staff: str | None = None,
                  user: User = Depends(current_user)) -> dict[str, Any]:
-    """The signed-in person's slice of the live timetable.
+    """The signed-in person's slice of the live timetables.
 
     Students and teachers cannot choose: the slice comes from their account.
     An administrator can look at any class or teacher, to check what people
     will see.
     """
-    pub = store.get_publication()
+    live = store.live_publications()
     base: dict[str, Any] = {"user": user.public(), "publication": None}
-    if pub is None:
+    if not live:
         return base
-    payload = pub["payload"]
-    inst = payload["instance"]
-    groups = {g["id"]: g for g in inst["groups"]}
-    staff_by_id = {s["id"]: s for s in inst["staff"]}
+
+    groups: dict[str, tuple[dict, dict]] = {}       # id -> (group, publication)
+    staff_by_id: dict[str, dict] = {}
+    for pub in live:
+        inst = pub["payload"]["instance"]
+        for g in inst["groups"]:
+            groups.setdefault(g["id"], (g, pub))
+        for s in inst["staff"]:
+            staff_by_id.setdefault(s["id"], s)
 
     if user.role == "student":
         kind, ident = "group", user.group_id
@@ -215,32 +305,45 @@ def my_timetable(group: str | None = None, staff: str | None = None,
     else:
         kind, ident = "group", group or next(iter(groups), None)
 
-    known = groups if kind == "group" else staff_by_id
-    meta = {k: pub[k] for k in ("id", "title", "note", "published_at", "published_by")}
+    first = live[0]
     out = base | {
-        "publication": meta,
-        "grid": inst["grid"],
+        "publication": _meta(first),
+        "publications": [_meta(p) for p in live],
+        "grid": first["payload"]["instance"]["grid"],
         "scope": None,
         "meetings": [],
     }
     if user.role == "admin":
+        multi = len(live) > 1
         out["choices"] = {
-            "groups": [{"id": g["id"], "name": g["name"]} for g in inst["groups"]],
-            "staff": [{"id": s["id"], "name": s["name"]} for s in inst["staff"]],
+            "groups": [{"id": gid, "name": g["name"] + (f" ({p['department']})" if multi else "")}
+                       for gid, (g, p) in groups.items()],
+            "staff": sorted(({"id": s["id"], "name": s["name"]} for s in staff_by_id.values()),
+                            key=lambda s: s["name"].casefold()),
         }
-    if not ident or ident not in known:
-        return out   # account not linked to anything in this version
+    group_names = {gid: g["name"] for gid, (g, _) in groups.items()}
 
     if kind == "group":
-        mine = [m for m in payload["meetings"] if m["group"] == ident]
-        g = groups[ident]
+        if not ident or ident not in groups:
+            return out   # account not linked to anything live
+        g, pub = groups[ident]
+        mine = [m | {"department": pub["department"]}
+                for m in pub["payload"]["meetings"] if m["group"] == ident]
         scope = {"kind": "group", "id": ident, "name": g["name"],
-                 "strength": g["strength"], "home_room": g.get("home_room")}
+                 "strength": g["strength"], "home_room": g.get("home_room"),
+                 "department": pub["department"]}
+        out.update(publication=_meta(pub), publications=[_meta(pub)],
+                   grid=pub["payload"]["instance"]["grid"])
     else:
-        mine = [m for m in payload["meetings"] if ident in m["staff_ids"]]
-        s = staff_by_id[ident]
-        scope = {"kind": "staff", "id": ident, "name": s["name"]}
-    scope["group_names"] = {gid: g["name"] for gid, g in groups.items()}
+        if not ident or ident not in staff_by_id:
+            return out
+        home, mine, pubs = _teaching(live, ident)
+        scope = {"kind": "staff", "id": ident, "name": staff_by_id[ident]["name"],
+                 "departments": [p["department"] for p in pubs]}
+        if home is not None:
+            out.update(publication=_meta(home), publications=[_meta(p) for p in pubs],
+                       grid=home["payload"]["instance"]["grid"])
+    scope["group_names"] = group_names
     scope["periods"] = len({(m["day"], m["period"]) for m in mine})
     out.update(scope=scope, meetings=mine)
     return out

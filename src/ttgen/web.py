@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import threading
 import uuid
 from collections import OrderedDict
 from contextlib import asynccontextmanager
@@ -31,7 +32,7 @@ from pydantic import BaseModel, Field
 from . import __version__, accounts, publish, settings, store
 from . import baseline as baseline_mod
 from . import data as data_mod
-from . import preflight, report, verify
+from . import elsewhere, preflight, report, verify
 from .accounts import require_admin
 from .config import Weights
 from .data import Instance, InstanceError
@@ -45,6 +46,11 @@ STATIC = Path(__file__).parent / "static"
 # clamped rather than trusted.
 MAX_TIME_LIMIT = 300.0
 MAX_YAML_BYTES = 2 * 1024 * 1024
+
+# Each search uses every core and, for a big department, up to 2 GB.  The same
+# process serves the students' portal, so only this many run at once; a
+# further request is told to try again instead of piling on.
+_solves = threading.BoundedSemaphore(max(1, int(os.environ.get("TTGEN_MAX_SOLVES", "2") or 2)))
 
 # Solved instances, kept so the CSV/HTML downloads return exactly the timetable
 # the user is looking at instead of re-solving and possibly finding another
@@ -314,6 +320,8 @@ def _grid_payload(inst: Instance) -> dict[str, Any]:
 def _instance_payload(inst: Instance) -> dict[str, Any]:
     return {
         "name": inst.name,
+        "department": inst.department,
+        "max_free_per_week": inst.max_free_per_week,
         "grid": _grid_payload(inst),
         "groups": [
             {
@@ -368,6 +376,7 @@ def _instance_payload(inst: Instance) -> dict[str, Any]:
 @api.post("/api/inspect")
 def inspect(body: InstanceBody) -> dict[str, Any]:
     inst = _parse(body)
+    inst, found = elsewhere.apply(inst, publish.others(inst.department))
     problems = preflight.check(inst)
     workload = [
         {
@@ -386,6 +395,7 @@ def inspect(body: InstanceBody) -> dict[str, Any]:
         "problems": problems,
         "feasible_so_far": not problems,
         "workload": workload,
+        "elsewhere": found.summary({sid: m.name for sid, m in inst.staff.items()}),
     }
 
 
@@ -429,6 +439,10 @@ def solve(body: SolveBody) -> dict[str, Any]:
     page stays responsive.
     """
     inst = _parse(body)
+    # Shared teachers and rooms keep clear of what other departments' live
+    # timetables already give them.
+    inst, found = elsewhere.apply(inst, publish.others(inst.department))
+    shared = found.summary({sid: m.name for sid, m in inst.staff.items()})
 
     entries = None
     if body.baseline:
@@ -446,15 +460,23 @@ def solve(body: SolveBody) -> dict[str, Any]:
             "stage": "preflight",
             "problems": problems,
             "instance": _instance_payload(inst),
+            "elsewhere": shared,
         }
 
     time_limit = max(1.0, min(float(body.time), MAX_TIME_LIMIT))
-    sol = TimetableModel(inst, baseline=entries).solve(time_limit=time_limit, seed=body.seed)
+    if not _solves.acquire(blocking=False):
+        raise HTTPException(429, "other timetables are being generated right now -- "
+                                 "try again in a minute or two")
+    try:
+        sol = TimetableModel(inst, baseline=entries).solve(time_limit=time_limit,
+                                                           seed=body.seed)
+        why = None
+        if not sol.ok and sol.status == "INFEASIBLE":
+            why = explain(inst, baseline=entries, time_limit=min(60.0, time_limit))
+    finally:
+        _solves.release()
 
     if not sol.ok:
-        why = None
-        if sol.status == "INFEASIBLE":
-            why = explain(inst, baseline=entries, time_limit=min(60.0, time_limit))
         return {
             "ok": False,
             "stage": "search",
@@ -464,6 +486,7 @@ def solve(body: SolveBody) -> dict[str, Any]:
             # the rules that cannot all hold, when the solver could pin them down
             "conflict": why,
             "instance": _instance_payload(inst),
+            "elsewhere": shared,
         }
 
     violations = verify.verify(inst, sol, baseline=entries)
@@ -504,6 +527,7 @@ def solve(body: SolveBody) -> dict[str, Any]:
         "penalties": penalties,
         "total_cost": total,
         "changes": changes,
+        "elsewhere": shared,
         "instance": _instance_payload(inst),
         "meetings": [
             {

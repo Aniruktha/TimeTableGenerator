@@ -211,6 +211,8 @@ table.tt td.sel{box-shadow:inset 0 0 0 3px var(--brand)!important}
 .actionbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:11px 14px;
   border:1px solid var(--brand);background:var(--brand-soft);border-radius:11px;margin:0 0 14px}
 .actionbar b{font-weight:650}
+.sharedbar{display:flex;gap:10px;align-items:flex-start;padding:10px 22px;font-size:13.5px;
+  background:var(--brand-soft);color:var(--brand-ink);border-bottom:1px solid var(--line)}
 .pendbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:11px 22px;
   background:var(--amber-soft);color:var(--amber);border-bottom:1px solid var(--line)}
 [hidden]{display:none!important}
@@ -264,6 +266,8 @@ const DAYS_ALL = ["MON","TUE","WED","THU","FRI","SAT","SUN"];
 function blankSetup() {
   return {
     name: "My timetable",
+    department: "",
+    max_free_per_week: 2,
     grid: {
       days: ["MON","TUE","WED","THU","FRI"],
       periods: [
@@ -402,6 +406,18 @@ function demandFor(gid) {
   }, 0);
 }
 const freeFor = (gid) => slotsInWeek() - demandFor(gid);
+/* The college's weekly limit on a class's free periods, or null for none. */
+const freeCap = () => (S.max_free_per_week === "" || S.max_free_per_week == null)
+  ? null : +S.max_free_per_week;
+const overCap = (gid) => freeCap() !== null && freeFor(gid) > freeCap();
+
+/* The longest day that keeps a class within the free-period limit while
+   still fitting its teaching, or null if no day length does. */
+function dayWithinCap(gid) {
+  const demand = demandFor(gid), days = S.grid.days.length, cap = freeCap();
+  const per = Math.floor((demand + cap) / days);
+  return per * days >= demand && per > 0 ? {periods: per, free: per * days - demand} : null;
+}
 
 /* The shortest day that would leave `want` free periods a week, and what it
    would actually leave -- days x periods rarely lands on the number exactly. */
@@ -680,6 +696,23 @@ function viewStart() {
         <input type="text" data-set="name" value="${esc(S.name)}" placeholder="e.g. Semester 2, 2025-26">
         <p class="help">This name appears at the top of the printed timetable.</p>
       </div>
+      <div class="f" style="max-width:420px;margin-top:18px">
+        <label>Department</label>
+        <input type="text" data-set="department" value="${esc(S.department || "")}" maxlength="60"
+          placeholder="e.g. AMCS">
+        <p class="help">Each department has its own live timetable. Teachers and rooms
+          that other departments also use are kept clear of the periods they already
+          have there — give a shared teacher or room the same ID in every department.</p>
+      </div>
+      <div class="f" style="max-width:420px;margin-top:18px">
+        <label>Most free periods a class may have in a week</label>
+        <input type="number" min="0" data-set="max_free_per_week" style="max-width:120px"
+          value="${freeCap() === null ? "" : freeCap()}" placeholder="no limit">
+        <p class="help">Every period a class is not taught counts, first and last periods
+          included. The number comes from the hours: a class taught 33 periods in a
+          40-period week always has 7. A class over the limit has to be given more hours
+          or a shorter day before a timetable can be made. Leave empty for no limit.</p>
+      </div>
 
       <div class="sec-title">The school week</div>
       <div class="f">
@@ -832,6 +865,16 @@ function freeSummary(gid) {
   const demand = demandFor(gid), free = freeFor(gid), slots = slotsInWeek();
   if (!demand) return "";
   const alt = shorterDay(gid, 1);
+  if (free >= 0 && overCap(gid)) {
+    const cap = freeCap(), fit = dayWithinCap(gid);
+    return `<div class="note bad"><span class="ico">&#9888;</span><span>
+      This class has <b>${demand}</b> periods of subjects and the week holds
+      <b>${slots}</b>, so it would have <b>${free} free periods</b> a week — more than
+      the <b>${cap}</b> allowed (Start step). Add <b>${free - cap}</b> more period${free - cap === 1 ? "" : "s"}
+      of teaching (library, tutorial, mentoring…)${fit && fit.periods < S.grid.periods.length
+        ? `, or shorten the day to <b>${fit.periods} periods</b>, which leaves ${fit.free} free`
+        : ""}.</span></div>`;
+  }
   return `<div class="note ${free < 0 ? "bad" : "info"}"><span class="ico">&#8505;</span><span>
     This class has <b>${demand}</b> periods of subjects and the week holds
     <b>${slots}</b> (${S.grid.days.length} days &times; ${S.grid.periods.length}
@@ -858,7 +901,8 @@ function viewClasses() {
       <td>${g.home_room ? esc(g.home_room) : '<span style="color:var(--muted)">any</span>'}</td>
       <td class="num">${subj.length}</td>
       <td class="num">${demandFor(g.id)} / ${slotsInWeek()}</td>
-      <td class="num" style="${free < 0 ? "color:var(--red);font-weight:700" : ""}">${free}</td>
+      <td class="num" style="${free < 0 || overCap(g.id) ? "color:var(--red);font-weight:700" : ""}"
+        title="${overCap(g.id) ? `more than the ${freeCap()} allowed` : ""}">${free}</td>
       <td class="act">
         <button class="btn tiny" data-edit="groups" data-i="${i}">Edit</button>
         <button class="btn tiny danger" data-del="groups" data-i="${i}">Delete</button></td>
@@ -1100,6 +1144,18 @@ const TABS = {
   quality:"How good is it", download:"Print &amp; download",
 };
 
+/* What other departments' live timetables already gave our shared teachers
+   and rooms -- the periods this timetable had to keep clear of. */
+function sharedNote(e, plain) {
+  if (!e || !e.departments.length) return "";
+  const who = [...e.staff.map(s => `${esc(s.name)} (${s.periods})`),
+               ...e.rooms.map(r => `room ${esc(r.id)} (${r.periods})`)];
+  const text = `Kept clear of what <b>${e.departments.map(esc).join(", ")}</b> already
+    ${e.departments.length === 1 ? "has" : "have"} live: ${who.slice(0, 8).join(", ")}${
+    who.length > 8 ? ` and ${who.length - 8} more` : ""} — periods already taken there.`;
+  return plain ? text : `<div class="sharedbar"><span>&#8644;</span><span>${text}</span></div>`;
+}
+
 function showResult() {
   const d = result, i = d.instance;
   const clean = d.violations.length === 0;
@@ -1118,6 +1174,7 @@ function showResult() {
       <button class="btn primary" id="publish" ${clean && !pending ? "" : "disabled"}
         title="${clean ? (pending ? "Re-plan first: you have changes waiting" : "Show this to students and teachers") : "This timetable failed the independent check"}">Publish&hellip;</button>
     </div>
+    ${sharedNote(d.elsewhere)}
     ${pending ? `<div class="pendbar"><span>&#9998; You asked to move <b>${pending}</b>
       period${pending===1?"":"s"}. Re-planning keeps everything else where it is unless it has to move.</span>
       <div class="spacer"></div>
@@ -1388,6 +1445,9 @@ async function runSolve(checkOnly) {
             "impossible, so one of these has to change first:", d.problems)
         : `<div class="note ok"><span class="ico">&#10003;</span><span>
             <b>Nothing obviously impossible.</b> Go ahead and generate.</span></div>`;
+      if (d.elsewhere && d.elsewhere.departments.length)
+        $("genmsg").insertAdjacentHTML("beforeend", `<div class="note info" style="margin-top:10px"><span class="ico">&#8644;</span>
+          <span>${sharedNote(d.elsewhere, true)}</span></div>`);
       return;
     }
     const effortNow = document.querySelector("#effort") ? effort : (runSolve.lastEffort || 60);
@@ -1576,6 +1636,9 @@ document.body.addEventListener("click", async (ev) => {
 document.body.addEventListener("input", (ev) => {
   const t = ev.target;
   if (t.dataset.set === "name") S.name = t.value;
+  if (t.dataset.set === "department") S.department = t.value;
+  if (t.dataset.set === "max_free_per_week")
+    S.max_free_per_week = t.value === "" ? null : Math.max(0, Math.floor(+t.value));
   if (t.dataset.per !== undefined) S.grid.periods[+t.dataset.per][t.dataset.k] = t.value;
   if (t.id === "c_kind" || t.id === "c_batches") {
     // batches only make sense for a lab; re-render the teacher pickers
@@ -1614,6 +1677,8 @@ function withoutPerDay(g) {
 /* Fill in anything a hand-written file left out, so the form never sees holes. */
 function normalise(raw) {
   const s = {...blankSetup(), ...raw};
+  // a file that says nothing about free periods has no limit (the server agrees)
+  s.max_free_per_week = raw.max_free_per_week ?? null;
   s.grid = {...blankSetup().grid, ...(raw.grid || {})};
   s.rooms = (raw.rooms || []).map(r => ({facilities:[], capacity:60, kind:"classroom", ...r}));
   s.staff = (raw.staff || []).map(x => ({kind:"internal", unavailable:[],
@@ -1753,23 +1818,29 @@ async function loadSamples() {
 async function publishResult() {
   const meta = await TT.dialog({
     title: "Publish this timetable?",
-    text: "It becomes the live version: every student and teacher sees their part of it at their next sign-in. The previous version is kept and can be put back.",
-    body: `<label class="field"><span>Title</span>
+    text: "It becomes the department's live version: its students and teachers see their part of it at their next sign-in. The department's previous version is kept and can be put back. Other departments are not affected.",
+    body: `<label class="field"><span>Department</span>
+        <input class="input" name="department" value="${esc(S.department || "")}" maxlength="60" required
+          placeholder="e.g. AMCS">
+        <small>Publishing replaces only this department's live timetable.</small></label>
+      <label class="field"><span>Title</span>
         <input class="input" name="title" value="${esc(S.name)}" maxlength="120" required>
         <small>Shown to everyone, e.g. “Semester 2 · from 12 Jan”.</small></label>
       <label class="field"><span>Note <span style="font-weight:400;color:var(--muted)">(optional)</span></span>
         <input class="input" name="note" maxlength="500" placeholder="e.g. Lab B moved to Thursday from week 6"></label>`,
     actions: [{label: "Cancel"}, {label: "Publish", kind: "primary", run: async (d) => {
       const f = d.querySelector("form");
+      S.department = f.department.value.trim();
       return TT.api("/api/publications", {method: "POST",
-        body: {result_id: result.id, title: f.title.value, note: f.note.value, setup: S}});
+        body: {result_id: result.id, title: f.title.value, note: f.note.value,
+               department: S.department, setup: S}});
     }}],
   });
   if (!meta) return;
   // the setup now carries the timetable just published, so the next re-plan starts from it
   try { await api("/api/saved", {instance: S, title: S.name}); } catch { /* publishing worked; saving is a bonus */ }
   const go = await TT.dialog({title: "Published", text:
-    `“${meta.publication.title}” is live as version ${meta.publication.id}. Students and teachers can sign in and see it now.`,
+    `“${meta.publication.title}” is live for ${meta.publication.department} as version ${meta.publication.id}. Its students and teachers can sign in and see it now.`,
     actions: [{label: "Stay here"}, {label: "Add people", value: "/admin/people"},
               {label: "See what people see", kind: "primary", value: "/my"}]});
   if (go) location.href = go;

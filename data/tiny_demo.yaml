@@ -3,6 +3,7 @@
 # reaching for the real AMCS data, which takes tens of seconds.
 
 name: Demo -- one M.Sc. class
+department: Demo
 
 grid:
   days: [MON, TUE, WED, THU, FRI]

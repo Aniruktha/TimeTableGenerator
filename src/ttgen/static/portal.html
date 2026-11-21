@@ -105,6 +105,9 @@ const cvars = (code) => { const c = TT.colour(code); return `--c-bg:${c.bg};--c-
 const toMin = (t) => { const [h, m] = String(t).split(":").map(Number); return h * 60 + m; };
 const isStaff = () => D.scope.kind === "staff";
 const gname = (gid) => D.scope.group_names[gid] || gid;
+// a teacher in several departments: say which one each class is in
+const manyDepts = () => isStaff() && (D.scope.departments || []).length > 1;
+const gwhere = (m) => gname(m.group) + (manyDepts() && m.department ? ` · ${m.department}` : "");
 const short = (names) => names.join(", ");
 
 /* All the meetings at one (day, period), as display lines. */
@@ -122,7 +125,7 @@ function slotItems(day, pid) {
     let lines;
     if (isStaff()) {
       const batch = m.batches > 1 ? ` · batch ${ms.map(x => x.batch).join(", ")}` : "";
-      lines = [gname(m.group) + batch, ms.map(x => x.room).join(", ")];
+      lines = [gwhere(m) + batch, ms.map(x => x.room).join(", ")];
     } else if (m.batches > 1) {
       lines = ms.map(x => `B${x.batch} · ${x.room} · ${short(x.staff)}`);
     } else {
@@ -207,7 +210,7 @@ function subjects() {
       <span class="sw"></span>
       <div style="min-width:0"><span class="code">${esc(m.course)}${m.kind === "lab" ? " · Lab" : ""}</span>
         <b>${esc(m.title)}</b>
-        <span>${esc(isStaff() ? gname(m.group) : [...staff].join(", "))}</span>
+        <span>${esc(isStaff() ? gwhere(m) : [...staff].join(", "))}</span>
         <span>${esc([...rooms].join(", "))}</span></div>
       <div class="hrs"><b>${slots.size}</b><span>per week</span></div>
     </div>`).join("");
@@ -264,6 +267,16 @@ function emptyPage(title, text, extra = "") {
     <b>${esc(title)}</b><p>${text}</p>${extra}</div></div>`;
 }
 
+/* Which live timetable(s) this page comes from: one chip, however many. */
+function pubChip(pubs) {
+  const latest = pubs.reduce((a, b) => (b.published_at > a.published_at ? b : a));
+  const tip = pubs.map(p => `${p.department || "—"}: ${p.title} (${TT.date(p.published_at)})`
+    + (p.note ? ` — ${p.note}` : "")).join("\n");
+  const what = pubs.length === 1 ? esc(latest.title)
+    : `${pubs.map(p => esc(p.department || p.title)).join(" + ")}`;
+  return `<span class="pubchip" title="${esc(tip)}"><span class="dot"></span>${what} · published ${TT.date(latest.published_at)}</span>`;
+}
+
 function render() {
   const u = status.user, pub = D.publication;
   if (!pub) return emptyPage("No timetable published yet",
@@ -284,18 +297,19 @@ function render() {
   const sub = s.kind === "group"
     ? [u.role === "admin" ? "Class timetable" : s.name, s.strength ? `${s.strength} students` : "",
        s.home_room ? `Home room ${s.home_room}` : ""].filter(Boolean).join(" · ")
-    : [u.role === "admin" ? "Teacher timetable" : "Your teaching week", `${s.periods} periods`].join(" · ");
+    : [u.role === "admin" ? "Teacher timetable" : "Your teaching week", `${s.periods} periods`,
+       manyDepts() ? `in ${s.departments.join(", ")}` : ""].filter(Boolean).join(" · ");
   document.title = `${s.name} · Timetable`;
   $("main").innerHTML = `
     ${previewBar()}
     <div class="hello">
       <div><h1>${esc(heading)}</h1><p>${esc(sub)}</p></div>
       <div class="tb-sp"></div>
-      <span class="pubchip" title="${esc(pub.note || "")}"><span class="dot"></span>${esc(pub.title)} · published ${TT.date(pub.published_at)}</span>
+      ${pubChip(D.publications || [pub])}
       <button class="btn noprint" onclick="print()">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7"/></svg>Print</button>
     </div>
-    <div class="printhead"><h1>${esc(s.name)} — ${esc(pub.title)}</h1>
+    <div class="printhead"><h1>${esc(s.name)} — ${esc((D.publications || [pub]).map(p => p.title).join(" + "))}</h1>
       <p>${esc(status.org)} · published ${TT.date(pub.published_at)} · printed ${new Date().toLocaleDateString()}</p></div>
     <div class="top">
       ${todayCard()}

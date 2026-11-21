@@ -51,6 +51,12 @@ let me, users = [], links = {staff: [], groups: [], live: false}, tab = "all";
 
 const staffName = (id) => links.staff.find(s => s.id === id)?.name;
 const groupName = (id) => links.groups.find(g => g.id === id)?.name;
+// "· AMCS" after a class or teacher, once more than one department is live
+const where = (x) => {
+  const d = x.departments || (x.department !== undefined ? [x.department] : []);
+  const many = new Set(links.groups.map(g => g.department)).size > 1;
+  return many && d.length ? ` · ${d.filter(Boolean).join(", ")}` : "";
+};
 const usernameFrom = (s) => String(s).toLowerCase().replace(/^(dr|mr|ms|mrs|prof)[._\s]+/, "")
   .replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "").slice(0, 60) || "user";
 
@@ -138,7 +144,7 @@ function showCredentials(created, failed = []) {
 function personForm(u = {}) {
   const role = u.role || (tab === "admin" ? "admin" : tab === "student" ? "student" : "teacher");
   const opts = (list, sel) => `<option value="">— choose —</option>` + list.map(x =>
-    `<option value="${esc(x.id)}" ${x.id === sel ? "selected" : ""}>${esc(x.name)}</option>`).join("");
+    `<option value="${esc(x.id)}" ${x.id === sel ? "selected" : ""}>${esc(x.name)}${where(x)}</option>`).join("");
   return `<label class="field"><span>Role</span><select class="input" name="role">
       ${["teacher", "student", "admin"].map(r => `<option value="${r}" ${r === role ? "selected" : ""}>${TT.ROLE[r]}</option>`).join("")}</select></label>
     <label class="field" data-for="teacher"><span>Teacher in the timetable</span>
@@ -205,7 +211,7 @@ async function addAllTeachers() {
   });
   if (!rows.length) return TT.toast("Every teacher in the live timetable already has a login.");
   const ok = await TT.dialog({title: `Create ${rows.length} teacher login${rows.length === 1 ? "" : "s"}?`,
-    text: "One for each teacher in the live timetable who doesn't have one yet.",
+    text: "One for each teacher in the live timetables who doesn't have one yet — a teacher shared by several departments gets one login that shows all of their periods.",
     body: `<div class="scroll-x" style="max-height:300px"><table class="t"><tr><th>Teacher</th><th>Login</th></tr>
       ${rows.map(r => `<tr><td>${esc(r.name)}</td><td style="font-family:var(--mono);font-size:13px">${esc(r.username)}</td></tr>`).join("")}</table></div>`,
     actions: [{label: "Cancel"}, {label: "Create logins", kind: "primary", value: true}]});

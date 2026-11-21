@@ -192,6 +192,17 @@ are both legal. The only thing that steers *where* the free periods land is
 S1: a free period stranded in the middle of a day is penalised heavily, so
 they collect at the start or end of days instead.
 
+### A weekly limit
+
+`max_free_per_week: 2` at the top of a setup (the Start step's **Most free
+periods a class may have in a week**; new setups in the browser start at 2)
+caps every class's free periods. Every period a class is not taught counts,
+first and last periods of a day included; college-wide holds do not. Because
+the count is subtraction, a class over the limit is refused before solving
+with the number of periods to add -- e.g. the shipped AMCS week needs 4-5 more
+per class, or the 7-period day below. The verifier re-counts it (H20). A setup
+without the field has no limit.
+
 The old per-day class settings (`min_periods_per_day`, `max_periods_per_day`
 and `free_policy` on a class, and the `load_imbalance` / `free_bunching`
 weights) are refused on load with a message saying to delete them — they are
@@ -267,8 +278,9 @@ are fixed by the syllabus before the solver ever runs. The real Sem-2
 timetables carry 33–34 hours, so **6–7 free periods per week is what the
 department actually schedules today**, not 2. What you *can* control is *where*
 the free periods land, which is why the model counts free periods per week and
-only penalises mid-day holes. If you genuinely need ≤2 free periods, you need
-~38 hours of curriculum, and that is a decision for the board of studies.
+only penalises mid-day holes. To hold every class to ≤2 free periods, set
+`max_free_per_week: 2` and either give each class ~38 hours (library,
+tutorial, mentoring) or drop to a 7-period day.
 
 **2. Period 8 (16:20–17:10) is real but lightly used**, and the printed grid has
 12 columns of which only 8 are ever used at these semesters. Sem-6 BSc uses
@@ -305,6 +317,8 @@ and `tt check` tries to say why in words before the solver ever runs.
 | H16 | College-wide blocked slots stay empty | `model._hard_availability` |
 | H17 | No staff member teaches more than `max_consecutive` periods in a row (0 = no limit; short breaks don't reset the count) | `model._hard_staff_clash` |
 | H18 | Locked periods of a baseline stay in their slot and room | `model._baseline` |
+| H19 | A teacher or room shared with another department keeps clear of every period it has in that department's live timetable, matched by clock time. Its daily cap and longest run count those periods too | `elsewhere`, `model._hard_availability`, `model._hard_rooms` |
+| H20 | A class has at most `max_free_per_week` free periods a week, when set | `preflight.check`, `model._hard_group_clash` |
 
 There is no H13 any more: it bounded a class's periods per day, which is a
 per-day free-period rule. Free periods are counted per week (see above).

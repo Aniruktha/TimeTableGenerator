@@ -1,0 +1,83 @@
+# A MADE-UP second department, for trying multi-department timetabling.
+# Not real PSG data.  It shares three teachers (same staff ids) and one lab
+# (same room id) with the AMCS sample, the way a real department borrows a
+# mathematician or a lab from another:
+#
+#   SUGANTHI_S_D, SUDHA_S_S, MUTHUSAMY_A   teach in AMCS too
+#   J510                                   is also an AMCS lab
+#
+# Publish AMCS first, then generate this one: it keeps those three teachers
+# and J510 clear of every period AMCS already gives them.
+
+name: Demo second department -- Semester 2
+department: Demo Applied Science
+
+grid:
+  days: [MON, TUE, WED, THU, FRI]
+  periods:
+    - {id: 1, start: "08:30", end: "09:20"}
+    - {id: 2, start: "09:20", end: "10:10"}
+    - {id: 3, start: "10:30", end: "11:20"}
+    - {id: 4, start: "11:20", end: "12:10"}
+    - {id: 5, start: "13:40", end: "14:30"}
+    - {id: 6, start: "14:30", end: "15:20"}
+    - {id: 7, start: "15:30", end: "16:20"}
+    - {id: 8, start: "16:20", end: "17:10"}
+  blocks: [[1, 2], [3, 4], [5, 6], [7, 8]]
+
+blocked_slots: []
+
+rooms:
+  - {id: D101, kind: classroom, capacity: 70, building: D}
+  - {id: D102, kind: classroom, capacity: 70, building: D}
+  - {id: J510, kind: lab, capacity: 30, building: J, facilities: [python, cpp, jdk]}
+  - {id: D201, kind: lab, capacity: 30, building: D, facilities: [python]}
+
+staff:
+  # shared with AMCS
+  - {id: SUGANTHI_S_D, name: SUGANTHI S D}
+  - {id: SUDHA_S_S, name: SUDHA S S}
+  - {id: MUTHUSAMY_A, name: MUTHUSAMY A}
+  # this department's own
+  - {id: DEMO_ARUN_P, name: ARUN P}
+  - {id: DEMO_BEULAH_K, name: BEULAH K}
+  - {id: DEMO_CHANDRU_V, name: CHANDRU V}
+
+groups:
+  - {id: DAS-A-S2, name: "Demo Applied Science A - Sem 2", strength: 50, home_room: D101}
+  - {id: DAS-B-S2, name: "Demo Applied Science B - Sem 2", strength: 50, home_room: D102}
+
+courses:
+  - {code: DA201, title: Numerical Methods, group: DAS-A-S2, kind: theory, hours: 4,
+     sections: [{staff: [SUGANTHI_S_D]}]}
+  - {code: DA202, title: Probability, group: DAS-A-S2, kind: theory, hours: 4,
+     sections: [{staff: [SUDHA_S_S]}]}
+  - {code: DA203, title: Mechanics, group: DAS-A-S2, kind: theory, hours: 4,
+     sections: [{staff: [DEMO_ARUN_P]}]}
+  - {code: DA204, title: Chemistry, group: DAS-A-S2, kind: theory, hours: 3,
+     sections: [{staff: [DEMO_BEULAH_K]}]}
+  - code: DA205
+    title: Programming Lab
+    group: DAS-A-S2
+    kind: lab
+    hours: 4
+    sections:
+      - {staff: [MUTHUSAMY_A], room_kind: lab, needs: [python]}
+      - {staff: [DEMO_CHANDRU_V], room_kind: lab, needs: [python]}
+
+  - {code: DB201, title: Numerical Methods, group: DAS-B-S2, kind: theory, hours: 4,
+     sections: [{staff: [SUGANTHI_S_D]}]}
+  - {code: DB202, title: Probability, group: DAS-B-S2, kind: theory, hours: 4,
+     sections: [{staff: [SUDHA_S_S]}]}
+  - {code: DB203, title: Mechanics, group: DAS-B-S2, kind: theory, hours: 4,
+     sections: [{staff: [DEMO_ARUN_P]}]}
+  - {code: DB204, title: Chemistry, group: DAS-B-S2, kind: theory, hours: 3,
+     sections: [{staff: [DEMO_BEULAH_K]}]}
+  - code: DB205
+    title: Programming Lab
+    group: DAS-B-S2
+    kind: lab
+    hours: 4
+    sections:
+      - {staff: [MUTHUSAMY_A], room_kind: lab, needs: [python]}
+      - {staff: [DEMO_CHANDRU_V], room_kind: lab, needs: [python]}

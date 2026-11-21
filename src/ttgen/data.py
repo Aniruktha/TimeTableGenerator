@@ -130,6 +130,26 @@ class Instance:
     courses: list[Course]
     weights: Weights = field(default_factory=Weights)
     blocked_slots: frozenset[tuple[str, int]] = frozenset()   # college-wide holds
+    # Which department this timetable is for.  Each department has its own
+    # live timetable; teachers and rooms shared with another department keep
+    # clear of the periods they already have there (see `elsewhere`).
+    department: str = ""
+    # The most free periods any class may have in a week (None: no limit).
+    # Every period of the week a class is not taught counts, first and last
+    # periods of a day included.  The number is fixed by the hours, not by the
+    # solver, so a setup over the limit is refused before solving.
+    max_free_per_week: int | None = None
+    # Filled in at solve time from the other departments' live timetables:
+    # staff/room id -> {(day, period): elsewhere.Taken}.  Never read from a file.
+    taken_staff: dict[str, dict[tuple[str, int], Any]] = field(default_factory=dict)
+    taken_rooms: dict[str, dict[tuple[str, int], Any]] = field(default_factory=dict)
+
+    def closed_for_staff(self, staff_id: str) -> frozenset[tuple[str, int]]:
+        """Slots a teacher cannot teach here: their own unavailability plus
+        periods they already teach in another department."""
+        own = self.staff[staff_id].unavailable
+        taken = self.taken_staff.get(staff_id)
+        return own | frozenset(taken) if taken else own
 
     # -- derived views ----------------------------------------------------- #
 
@@ -281,6 +301,18 @@ def load(path: str | Path) -> Instance:
     return from_dict(raw)
 
 
+def _optional_int(raw: Any, where: str) -> int | None:
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise InstanceError(f"{where}: expected a whole number, got {raw!r}") from None
+    if value < 0:
+        raise InstanceError(f"{where}: cannot be negative")
+    return value
+
+
 def from_dict(raw: dict) -> Instance:
     g = raw.get("grid") or {}
     grid = Grid(
@@ -385,6 +417,7 @@ def from_dict(raw: dict) -> Instance:
 
     inst = Instance(
         name=raw.get("name", "timetable"),
+        department=" ".join(str(raw.get("department") or "").split())[:60],
         grid=grid,
         rooms=rooms,
         staff=staff,
@@ -392,6 +425,7 @@ def from_dict(raw: dict) -> Instance:
         courses=courses,
         weights=Weights.from_dict(raw.get("weights")),
         blocked_slots=_slot_list(raw.get("blocked_slots"), grid, "blocked_slots"),
+        max_free_per_week=_optional_int(raw.get("max_free_per_week"), "max_free_per_week"),
     )
     validate(inst)
     return inst

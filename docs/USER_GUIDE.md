@@ -34,20 +34,64 @@ else stays where it is.
 
 ### Publish it
 
-Press **Publish…**, give it a title people will recognise (for example
-"Semester 2 · from 12 Jan") and an optional note. It goes live at once.
-Students and teachers only ever see the live version.
+Press **Publish…**, check the department, and give it a title people will
+recognise (for example "Semester 2 · from 12 Jan") and an optional note. It
+goes live at once for that department. Students and teachers only ever see
+live versions.
 
-**Published** lists every version. **Make live** rolls back to an older one,
-and **Take it down** hides the timetable without deleting anything. **Change it
+**Published** lists every version. Each department has its own live version.
+**Make live** rolls back to an older one, and **Take it down** hides one
+department's timetable without deleting anything. Other departments are not
+affected. **Change it
 in Build** reopens a version so a mid-term change moves as little as possible.
 **Print every sheet** gives the whole department's sheets (every class,
 teacher and room) ready to print or save as PDF.
 
+### Free periods
+
+**Most free periods a class may have in a week** (Build → Start) is the
+college's limit. New setups start at 2. Every period a class is not taught
+counts, including the first and last periods of a day. A class taught 33
+periods of a 40-period week always has 7 free, however the week is arranged,
+so the Classes step marks a class over the limit in red and says how many
+periods to add, or how short the day must be. Such a setup is refused before
+generating. Leave the box empty for no limit.
+
+### More than one department
+
+Build the college **one department at a time**. Give each setup its
+department under **Start** (the AMCS sample already says `AMCS`), generate
+it and publish it. When you generate the next department, any teacher or
+room it shares with a department that is already live keeps clear of the
+periods it has there. The result page says what it kept clear of, for
+example "Kept clear of what AMCS already has live: SUGANTHI S D (3), room
+J510 (16)".
+
+- **The same teacher or room must have the same ID in every department.**
+  That is how the generator knows two setups mean the same person or room.
+  The class IDs must be different in every department.
+- A shared teacher's daily limit and longest run of back-to-back periods
+  count their periods in every department.
+- Departments with different bell timings are matched by clock time: a
+  period that overlaps another department's period counts as clashing.
+- Publishing, and **Make live** on an older version, are checked against
+  the other departments' live timetables as they are at that moment. If
+  something clashes, nothing goes live and the message names the teacher,
+  the period and the department; generate again so it keeps clear.
+- If no timetable can fit around the other departments, the result names
+  the cause, for example "SUDHA S S already teaching in AMCS at …".
+- A teacher who works in several departments has one login and sees one
+  week with all of their periods, each marked with its department.
+
+The `second_dept_demo` sample is a made-up department that shares three
+teachers and lab J510 with AMCS. Publish AMCS, then generate it to see this
+in action.
+
 ### Give people logins — People
 
-- **Add every teacher** creates a login for each teacher in the live timetable
-  who doesn't have one yet.
+- **Add every teacher** creates a login for each teacher in the live
+  timetables who doesn't have one yet. A teacher shared by departments gets
+  one login.
 - **Import students (CSV)** takes a file with the columns `roll_no, name,
   class`. `class` can be the class name or its id; the dialog lists them.
 - **+ Add a person** adds a single login of any role.

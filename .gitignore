@@ -17,3 +17,9 @@ out/
 
 # setups saved from the browser -- your working data, not the project
 data/saved/
+
+# accounts, sessions and published timetables (the site database)
+data/state/
+
+# local deployment settings
+.env

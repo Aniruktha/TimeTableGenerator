@@ -16,17 +16,23 @@ import re
 import tempfile
 import uuid
 from collections import OrderedDict
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 import yaml
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi.responses import (
+    FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response,
+)
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import __version__, accounts, publish, settings, store
 from . import baseline as baseline_mod
 from . import data as data_mod
 from . import preflight, report, verify
+from .accounts import require_admin
 from .config import Weights
 from .data import Instance, InstanceError
 from .model import TimetableModel, explain
@@ -47,7 +53,18 @@ _CACHE_SIZE = 32
 _results: "OrderedDict[str, tuple[Instance, Solution, set]]" = OrderedDict()
 
 
-app = FastAPI(title="AMCS Timetable Generator", docs_url="/api/docs")
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    accounts.bootstrap_from_env()
+    yield
+
+
+app = FastAPI(title="Timetable", version=__version__, docs_url=None, redoc_url=None,
+              lifespan=_lifespan)
+
+# Every builder endpoint (samples, setups, solve, exports) is administrators
+# only; the portal and sign-in routes are declared in their own modules.
+api = APIRouter(dependencies=[Depends(require_admin)])
 
 
 # --------------------------------------------------------------------------- #
@@ -90,12 +107,12 @@ def _samples() -> list[dict[str, Any]]:
     return out
 
 
-@app.get("/api/samples")
+@api.get("/api/samples")
 def list_samples() -> dict[str, Any]:
     return {"samples": _samples()}
 
 
-@app.get("/api/samples/{sample_id}", response_class=PlainTextResponse)
+@api.get("/api/samples/{sample_id}", response_class=PlainTextResponse)
 def get_sample(sample_id: str) -> str:
     path = data_dir() / f"{sample_id}.yaml"
     # `sample_id` comes from the URL: resolve and confirm it is still inside
@@ -114,7 +131,7 @@ _SLUG = re.compile(r"[^a-z0-9]+")
 
 
 def saved_dir() -> Path:
-    d = Path(os.environ.get("TTGEN_SAVED_DIR") or (data_dir() / "saved"))
+    d = Path(os.environ.get("TTGEN_SAVED_DIR") or (settings.home() / "saved"))
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -146,7 +163,7 @@ def _describe(path: Path) -> dict[str, Any] | None:
     }
 
 
-@app.get("/api/saved")
+@api.get("/api/saved")
 def list_saved() -> dict[str, Any]:
     found = [_describe(p) for p in sorted(saved_dir().glob("*.yaml"))]
     setups = [x for x in found if x]
@@ -154,7 +171,7 @@ def list_saved() -> dict[str, Any]:
     return {"saved": setups}
 
 
-@app.get("/api/saved/{setup_id}", response_class=PlainTextResponse)
+@api.get("/api/saved/{setup_id}", response_class=PlainTextResponse)
 def get_saved(setup_id: str) -> str:
     path = _saved_path(setup_id)
     if not path.is_file():
@@ -162,7 +179,7 @@ def get_saved(setup_id: str) -> str:
     return path.read_text(encoding='utf-8')
 
 
-@app.delete("/api/saved/{setup_id}")
+@api.delete("/api/saved/{setup_id}")
 def delete_saved(setup_id: str) -> dict[str, Any]:
     path = _saved_path(setup_id)
     if not path.is_file():
@@ -229,7 +246,7 @@ def _parse(body: InstanceBody) -> Instance:
         raise HTTPException(400, f"something is missing or malformed: {exc}") from exc
 
 
-@app.post("/api/parse")
+@api.post("/api/parse")
 def parse(body: InstanceBody) -> dict[str, Any]:
     """Validate an uploaded file and hand the mapping back to the editor.
 
@@ -242,7 +259,7 @@ def parse(body: InstanceBody) -> dict[str, Any]:
     return {"instance": raw}
 
 
-@app.post("/api/instance.yaml", response_class=PlainTextResponse)
+@api.post("/api/instance.yaml", response_class=PlainTextResponse)
 def dump_instance(body: InstanceBody) -> Response:
     """The editor's current data as a YAML file, for saving and re-loading."""
     raw = _raw(body)
@@ -259,7 +276,7 @@ class SaveBody(InstanceBody):
     title: str = ""
 
 
-@app.post("/api/saved")
+@api.post("/api/saved")
 def save_setup(body: SaveBody) -> dict[str, Any]:
     """Store the editor's current data under the site's setup library.
 
@@ -348,7 +365,7 @@ def _instance_payload(inst: Instance) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
-@app.post("/api/inspect")
+@api.post("/api/inspect")
 def inspect(body: InstanceBody) -> dict[str, Any]:
     inst = _parse(body)
     problems = preflight.check(inst)
@@ -403,7 +420,7 @@ def _penalty_payload(inst: Instance, sol: Solution) -> tuple[list[dict], int]:
     return rows, total
 
 
-@app.post("/api/solve")
+@api.post("/api/solve")
 def solve(body: SolveBody) -> dict[str, Any]:
     """Build and search the model.
 
@@ -533,7 +550,7 @@ def _render(result_id: str, suffix: str, writer) -> str:
         return path.read_text(encoding='utf-8')
 
 
-@app.get("/api/result/{result_id}/timetable.csv")
+@api.get("/api/result/{result_id}/timetable.csv")
 def export_csv(result_id: str) -> Response:
     text = _render(result_id, ".csv", report.to_csv)
     return Response(
@@ -543,7 +560,7 @@ def export_csv(result_id: str) -> Response:
     )
 
 
-@app.get("/api/result/{result_id}/timetable.html")
+@api.get("/api/result/{result_id}/timetable.html")
 def export_html(result_id: str, download: bool = False) -> Response:
     """The standalone HTML export.
 
@@ -560,16 +577,105 @@ def export_html(result_id: str, download: bool = False) -> Response:
 
 
 # --------------------------------------------------------------------------- #
-# The page itself
+# Pages, and the guards around every request
 # --------------------------------------------------------------------------- #
 
+app.include_router(api)
+app.include_router(accounts.auth)
+app.include_router(accounts.users)
+app.include_router(publish.admin)
+app.include_router(publish.portal)
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
-@app.get("/", response_class=HTMLResponse)
-def index() -> FileResponse:
-    return FileResponse(STATIC / "index.html")
+_UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
 
 
-def serve(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> None:
+@app.middleware("http")
+async def same_origin(request: Request, call_next):
+    """Refuse state-changing requests sent from another site's page.
+
+    The session cookie is SameSite=Lax already; this is the second lock.  A
+    browser always sends ``Origin`` on a cross-site POST, so if it is present
+    it must name this host.
+    """
+    if request.method in _UNSAFE:
+        origin = request.headers.get("origin")
+        host = request.headers.get("host", "")
+        if origin and origin.split("://", 1)[-1].rstrip("/") != host:
+            return JSONResponse({"detail": "cross-site request refused"}, status_code=403)
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    if request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+    elif request.url.path.startswith("/static/"):
+        # revalidate (cheap, ETag) so an upgrade is never half old CSS/JS
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
+
+
+def _page(name: str) -> FileResponse:
+    return FileResponse(STATIC / name, headers={"Cache-Control": "no-cache"})
+
+
+def _who(request: Request) -> store.User | None:
+    user = store.session_user(request.cookies.get(accounts.COOKIE))
+    return None if user is None or user.must_change else user
+
+
+def _gate(request: Request, page: str, *roles: str) -> Response:
+    user = _who(request)
+    if user is None:
+        return RedirectResponse(f"/login?next={request.url.path}", status_code=303)
+    if roles and user.role not in roles:
+        return RedirectResponse(accounts.home_for(user), status_code=303)
+    return _page(page)
+
+
+@app.get("/", include_in_schema=False)
+def root(request: Request) -> Response:
+    return RedirectResponse(accounts.home_for(_who(request)), status_code=303)
+
+
+@app.get("/login", include_in_schema=False)
+def login_page() -> FileResponse:
+    return _page("login.html")
+
+
+@app.get("/admin", include_in_schema=False)
+def admin_builder(request: Request) -> Response:
+    return _gate(request, "index.html", "admin")
+
+
+@app.get("/admin/published", include_in_schema=False)
+def admin_published(request: Request) -> Response:
+    return _gate(request, "published.html", "admin")
+
+
+@app.get("/admin/people", include_in_schema=False)
+def admin_people(request: Request) -> Response:
+    return _gate(request, "people.html", "admin")
+
+
+@app.get("/my", include_in_schema=False)
+def my_page(request: Request) -> Response:
+    return _gate(request, "portal.html")
+
+
+@app.get("/healthz", include_in_schema=False)
+def health() -> dict[str, Any]:
+    store.count_users()          # proves the database opens
+    return {"ok": True, "version": __version__}
+
+
+def serve(host: str = "127.0.0.1", port: int = 8000, reload: bool = False,
+          proxy: bool = False) -> None:
     import uvicorn
 
-    uvicorn.run("ttgen.web:app" if reload else app, host=host, port=port, reload=reload)
+    # One worker on purpose: generated drafts live in this process's memory
+    # until they are published.  CP-SAT already uses every core for a solve.
+    uvicorn.run(
+        "ttgen.web:app" if reload else app, host=host, port=port, reload=reload,
+        proxy_headers=proxy, forwarded_allow_ips="*" if proxy else None,
+    )

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Published · Timetable</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+.livecard{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:20px;padding:22px;align-items:start}
+@media (max-width:760px){.livecard{grid-template-columns:minmax(0,1fr)}}
+.livecard h2{font-size:21px;margin:8px 0 4px}
+.livecard .meta{color:var(--muted);font-size:14px}
+.livecard .stats{margin-top:18px;max-width:620px}
+.livecard .side{display:flex;flex-direction:column;gap:8px;min-width:220px}
+.livecard .side .btn{justify-content:flex-start}
+.verlist td b{display:block}
+.verlist td small{color:var(--muted)}
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="phead">
+    <div><h1>Published timetables</h1>
+      <p>What students and teachers see. Only the live version is shown to them; older versions are kept so you can roll back.</p></div>
+  </div>
+  <div id="live"><div class="loading"><span class="spinner"></span></div></div>
+  <h2 style="font-size:16px;margin:30px 0 12px">All versions</h2>
+  <div class="card" id="history"></div>
+</main>
+
+<script src="/static/app.js"></script>
+<script>
+"use strict";
+const {$, esc, api} = TT;
+const ICON = {
+  eye: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>',
+  print: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7"/></svg>',
+  sheet: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>',
+  edit: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
+};
+
+function stat(v, l) { return `<div class="stat"><b>${v ?? "—"}</b><span>${l}</span></div>`; }
+
+async function load() {
+  const {publications: all} = await api("/api/publications");
+  const live = all.find(p => p.current);
+  $("live").innerHTML = live ? `<div class="card livecard">
+      <div>
+        <span class="tag live"><span class="dot"></span> Live now</span>
+        <h2>${esc(live.title)}</h2>
+        <p class="meta">Version ${live.id} · published ${TT.dateTime(live.published_at)} by ${esc(live.published_by)}</p>
+        ${live.note ? `<p style="margin-top:10px">${esc(live.note)}</p>` : ""}
+        <div class="stats">${stat(live.summary.classes, "classes")}${stat(live.summary.teachers, "teachers")}
+          ${stat(live.summary.rooms, "rooms used")}${stat(live.summary.periods, "class-periods")}</div>
+      </div>
+      <div class="side">
+        <a class="btn" href="/my">${ICON.eye} See what people see</a>
+        <a class="btn" href="/api/publications/${live.id}/timetable.html" target="_blank" rel="noopener">${ICON.print} Print every sheet</a>
+        <a class="btn" href="/api/publications/${live.id}/timetable.csv">${ICON.sheet} Download spreadsheet</a>
+        <a class="btn" href="/admin?from=${live.id}">${ICON.edit} Change it in Build</a>
+        <button class="btn danger" data-withdraw>Take it down</button>
+      </div></div>`
+    : `<div class="card"><div class="empty"><div class="ico">${ICON.eye}</div>
+        <b>Nothing is live</b><p>${all.length ? "Students and teachers see “not published yet”. Make a version live below."
+          : "Generate a timetable under <b>Build</b>, check it, then press <b>Publish</b>."}</p>
+        ${all.length ? "" : `<div style="margin-top:18px"><a class="btn primary" href="/admin">Go to Build</a></div>`}</div></div>`;
+
+  $("history").innerHTML = all.length ? `<div class="scroll-x"><table class="t verlist">
+      <tr><th>Version</th><th>Timetable</th><th>Published</th><th class="num">Classes</th><th class="num">Teachers</th><th></th></tr>
+      ${all.map(p => `<tr>
+        <td><b>v${p.id}</b>${p.current ? `<span class="tag ok">live</span>` : ""}</td>
+        <td><b>${esc(p.title)}</b>${p.note ? `<small>${esc(p.note)}</small>` : ""}</td>
+        <td>${TT.dateTime(p.published_at)}<br><small>${esc(p.published_by)}</small></td>
+        <td class="num">${p.summary.classes ?? ""}</td><td class="num">${p.summary.teachers ?? ""}</td>
+        <td class="act"><div class="btns" style="justify-content:flex-end">
+          ${p.current ? "" : `<button class="btn sm" data-live="${p.id}">Make live</button>`}
+          <a class="btn sm ghost" href="/api/publications/${p.id}/timetable.html" target="_blank" rel="noopener">Print</a>
+          <a class="btn sm ghost" href="/api/publications/${p.id}/timetable.csv">CSV</a>
+          <a class="btn sm ghost" href="/admin?from=${p.id}">Open</a>
+          ${p.current ? "" : `<button class="btn sm ghost danger" data-del="${p.id}">Delete</button>`}
+        </div></td></tr>`).join("")}
+    </table></div>` : `<div class="empty"><p>No versions yet.</p></div>`;
+}
+
+document.addEventListener("click", async (ev) => {
+  const b = ev.target.closest("button");
+  if (!b) return;
+  try {
+    if (b.dataset.live) {
+      const ok = await TT.dialog({title: `Make version ${b.dataset.live} live?`,
+        text: "Everyone will see this version from their next page load.",
+        actions: [{label: "Cancel"}, {label: "Make live", kind: "primary", value: true}]});
+      if (!ok) return;
+      await api(`/api/publications/${b.dataset.live}/live`, {method: "POST"});
+      TT.toast(`Version ${b.dataset.live} is live.`);
+    }
+    if (b.dataset.del) {
+      const ok = await TT.dialog({title: `Delete version ${b.dataset.del}?`,
+        text: "Its timetable, spreadsheet and printouts are removed for good.",
+        actions: [{label: "Cancel"}, {label: "Delete", kind: "primary danger", value: true}]});
+      if (!ok) return;
+      await api(`/api/publications/${b.dataset.del}`, {method: "DELETE"});
+      TT.toast("Deleted.");
+    }
+    if (b.hasAttribute("data-withdraw")) {
+      const ok = await TT.dialog({title: "Take the timetable down?",
+        text: "Students and teachers will see “not published yet” until you make a version live again. Nothing is deleted.",
+        actions: [{label: "Cancel"}, {label: "Take it down", kind: "primary danger", value: true}]});
+      if (!ok) return;
+      await api("/api/publications/withdraw", {method: "POST"});
+      TT.toast("Taken down. No version is live.");
+    }
+    await load();
+  } catch (e) { TT.toast(e.message, true); }
+});
+
+TT.boot("published", ["admin"]).then(load).catch(() => {});
+</script>
+</body>
+</html>

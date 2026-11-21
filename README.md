@@ -1,13 +1,42 @@
-# AMCS Timetable Generator
+# Timetable
 
-A CP-SAT timetable generator for the AMCS department at PSG College of
-Technology, Coimbatore. This is **stage 1 of 4** — a deliberately small,
-provable slice, not the whole department.
+A college timetable generator with a sign-in portal. The timetable office
+builds the week in the browser, a CP-SAT solver works out a clash-free
+timetable, an independent checker re-verifies every rule, and once it is
+published every **teacher** and **student** signs in and sees their own week.
+
+Built for the AMCS department at PSG College of Technology, Coimbatore. The
+rules are general: any department that has rooms, teachers, classes, subjects
+and two-period labs fits.
+
+**Version 1.0.0.** See [CHANGELOG.md](CHANGELOG.md).
+
+| Who | Signs in to | Can |
+| --- | --- | --- |
+| Administrator | **Build · Published · People** | enter data, generate, publish, roll back, manage logins |
+| Teacher | **My timetable** | see every period they take: class, room, today first; print it |
+| Student | **My timetable** | see their class's week, subjects and faculty; print it |
+
+## Quick start
 
 ```bash
 uv sync
-uv run tt web                          # browser UI at http://127.0.0.1:8000
+uv run tt web                          # http://127.0.0.1:8000
 ```
+
+The first visit asks you to create the administrator account. Then:
+
+1. **Build**: load an example or enter your rooms, teachers, classes and
+   subjects, then press **Generate**.
+2. Check the result and press **Publish**.
+3. **People → Add every teacher** creates a login for each teacher in the
+   live timetable. **Import students (CSV)** takes `roll_no, name, class`.
+   Hand out the temporary passwords; everyone picks their own the first time
+   they sign in.
+
+To put it on a server for the whole college, see
+[docs/DEPLOY.md](docs/DEPLOY.md) (Docker, HTTPS, backups). How each role uses
+it is in [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
 Or from the terminal:
 
@@ -16,7 +45,7 @@ uv run tt --data data/tiny_demo.yaml solve      # small demo, solves in under a 
 uv run tt check                        # validate the instance, look for impossibilities
 uv run tt workload                     # per-staff load: where infeasibility comes from
 uv run tt solve --time 120 --rooms     # generate, verify, print, export
-open out/timetable.html
+uv run tt user list                    # sign-in accounts (also: user add, user passwd)
 ```
 
 ---
@@ -44,11 +73,7 @@ room) plus two exports:
 
 ### In the browser
 
-```bash
-uv run tt web
-```
-
-Six steps, one thing at a time: **Start → Rooms → Teachers → Classes →
+`uv run tt web`, sign in as an administrator, open **Build**. Six steps, one thing at a time: **Start → Rooms → Teachers → Classes →
 Subjects → Generate**. Each step has its own small form — add a row, edit it,
 delete it — and its own CSV importer, so a spreadsheet of rooms and a
 spreadsheet of subjects go in separately rather than as one large file. Every
@@ -78,7 +103,7 @@ Error messages are rewritten into something actionable — "PART needs a lab
 holding at least 40 students, and you don't have one. Add a bigger lab, or
 split the subject into batches" rather than the solver's own wording.
 
-The solver runs locally. Nothing is uploaded anywhere.
+The solver runs on your own server. Nothing is sent anywhere else.
 
 ### In the terminal
 
@@ -370,10 +395,16 @@ src/ttgen/model.py      the CP-SAT model — hard constraints, then soft
 src/ttgen/baseline.py   published timetable as a baseline: load, locks, diff
 src/ttgen/verify.py     independent re-check of a solution
 src/ttgen/report.py     class / staff / room views, CSV + HTML export
-src/ttgen/cli.py        tt check | workload | solve | web
-src/ttgen/web.py        FastAPI app: JSON API over the same solver
-src/ttgen/static/       the single-page browser UI
-tests/                  one test per hard constraint, on tiny fast instances
+src/ttgen/cli.py        tt check | workload | solve | web | serve | user
+src/ttgen/web.py        FastAPI app: builder API, pages, request guards
+src/ttgen/accounts.py   sign-in, sessions, roles, the accounts API
+src/ttgen/publish.py    publishing versions; each person's slice of the live one
+src/ttgen/store.py      the SQLite database: users, sessions, publications
+src/ttgen/settings.py   deployment settings from the environment
+src/ttgen/static/       login, portal, builder, people and published pages
+docs/                   deployment guide, user guide
+Dockerfile, compose.yaml  one-container deployment
+tests/                  every hard constraint, plus sign-in / roles / publishing over HTTP
 ```
 
 ## Not modelled yet

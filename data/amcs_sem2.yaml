@@ -96,11 +96,14 @@ staff:
     unavailable: ["MON:*"]
     prefer_few_days: true
 
+# Each class has its own lecture hall: every theory and activity period is held
+# there, and only labs move.  NOTE: these four assignments are placeholders --
+# set each one to the room printed for that class on the published timetable.
 groups:
-  - {id: SS-S2,  name: "M.Sc. Software Systems - Sem 2",           strength: 40}
-  - {id: CY-S2,  name: "M.Sc. Cyber Security - Sem 2",             strength: 40}
-  - {id: DS-S2,  name: "M.Sc. Data Science - Sem 2",               strength: 40}
-  - {id: TCS-S2, name: "M.Sc. Theoretical Computer Science - Sem 2", strength: 40}
+  - {id: SS-S2,  name: "M.Sc. Software Systems - Sem 2",           strength: 40, home_room: M201}
+  - {id: CY-S2,  name: "M.Sc. Cyber Security - Sem 2",             strength: 40, home_room: M202}
+  - {id: DS-S2,  name: "M.Sc. Data Science - Sem 2",               strength: 40, home_room: M503}
+  - {id: TCS-S2, name: "M.Sc. Theoretical Computer Science - Sem 2", strength: 40, home_room: M504}
 
 courses:
   # ===================== M.Sc. Software Systems ========================= #

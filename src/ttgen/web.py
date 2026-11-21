@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import threading
 import uuid
 from collections import OrderedDict
 from contextlib import asynccontextmanager
@@ -45,6 +46,11 @@ STATIC = Path(__file__).parent / "static"
 # clamped rather than trusted.
 MAX_TIME_LIMIT = 300.0
 MAX_YAML_BYTES = 2 * 1024 * 1024
+
+# Each search uses every core and, for a big department, up to 2 GB.  The same
+# process serves the students' portal, so only this many run at once; a
+# further request is told to try again instead of piling on.
+_solves = threading.BoundedSemaphore(max(1, int(os.environ.get("TTGEN_MAX_SOLVES", "2") or 2)))
 
 # Solved instances, kept so the CSV/HTML downloads return exactly the timetable
 # the user is looking at instead of re-solving and possibly finding another
@@ -458,12 +464,19 @@ def solve(body: SolveBody) -> dict[str, Any]:
         }
 
     time_limit = max(1.0, min(float(body.time), MAX_TIME_LIMIT))
-    sol = TimetableModel(inst, baseline=entries).solve(time_limit=time_limit, seed=body.seed)
+    if not _solves.acquire(blocking=False):
+        raise HTTPException(429, "other timetables are being generated right now -- "
+                                 "try again in a minute or two")
+    try:
+        sol = TimetableModel(inst, baseline=entries).solve(time_limit=time_limit,
+                                                           seed=body.seed)
+        why = None
+        if not sol.ok and sol.status == "INFEASIBLE":
+            why = explain(inst, baseline=entries, time_limit=min(60.0, time_limit))
+    finally:
+        _solves.release()
 
     if not sol.ok:
-        why = None
-        if sol.status == "INFEASIBLE":
-            why = explain(inst, baseline=entries, time_limit=min(60.0, time_limit))
         return {
             "ok": False,
             "stage": "search",

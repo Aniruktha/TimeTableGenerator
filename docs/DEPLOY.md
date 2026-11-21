@@ -88,6 +88,7 @@ counts failed attempts per real client address, not per proxy.
 | `TTGEN_SECURE_COOKIES` | off | `1` once served over HTTPS |
 | `TTGEN_ADMIN_USERNAME`, `TTGEN_ADMIN_PASSWORD` | unset | create this admin at start-up if there are no accounts yet |
 | `TTGEN_DATA_DIR` | `data/` | where the bundled example setups are read from |
+| `TTGEN_MAX_SOLVES` | 2 | timetables generated at once; another request is asked to try again. Each uses every core and up to ~2 GB for a large department |
 
 ## The first administrator
 

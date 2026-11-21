@@ -7,6 +7,10 @@
   A class over it is refused before generating, with how many periods to add
   or how short the day must be. The verifier re-counts it (H20), and an
   impossible result names the limit. Setups without it have no limit.
+- Two departments published at the same moment can no longer both go live
+  when they clash: the clash check and going live are one step.
+- At most `TTGEN_MAX_SOLVES` (default 2) timetables generate at once, so a
+  burst of Generate clicks cannot starve the students' portal of memory.
 
 ## Unreleased: several departments
 

@@ -15,6 +15,7 @@ teacher or room in two departments at once.
 from __future__ import annotations
 
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +96,13 @@ def others(department: str) -> list[dict[str, Any]]:
             if not elsewhere.same_department(p["department"], department)]
 
 
+# Checking for clashes and going live must be one step: two departments
+# published at the same moment would otherwise each pass the check against
+# the other's *old* state and go live clashing.  One process serves the site
+# (see DEPLOY), so a process lock is enough.
+_going_live = threading.Lock()
+
+
 def _refuse_clashes(payload: dict[str, Any], department: str, verb: str) -> None:
     problems = elsewhere.clashes(payload, others(department))
     if problems:
@@ -120,9 +128,6 @@ def publish(body: PublishBody, user: User = Depends(require_admin)) -> dict[str,
             + "; ".join(problems[:5])
         )
     payload = snapshot(inst, sol, locked)
-    # Generated against the live timetables of the moment; another department
-    # may have gone live since, so check again against what is live *now*.
-    _refuse_clashes(payload, department, "be published")
     csv, html = _render(inst, sol, locked)
     # Reopening this version in Build must re-plan *from* it, so the setup
     # carries the published periods (and their locks) whatever the page sent.
@@ -130,10 +135,14 @@ def publish(body: PublishBody, user: User = Depends(require_admin)) -> dict[str,
     if setup is not None:
         setup["timetable"] = baseline_mod.to_rows(baseline_mod.from_meetings(sol.meetings, locked))
         setup["department"] = department
-    meta = store.add_publication(
-        (body.title or inst.name).strip()[:120], body.note.strip()[:500], user.name,
-        payload, setup, csv, html, department=department,
-    )
+    # Generated against the live timetables of the moment; another department
+    # may have gone live since, so check again against what is live *now*.
+    with _going_live:
+        _refuse_clashes(payload, department, "be published")
+        meta = store.add_publication(
+            (body.title or inst.name).strip()[:120], body.note.strip()[:500], user.name,
+            payload, setup, csv, html, department=department,
+        )
     return {"publication": meta}
 
 
@@ -154,11 +163,12 @@ def make_live(pub_id: int) -> dict[str, Any]:
     pub = _get(pub_id)
     # An old version was fine next to the departments of its day; theirs may
     # have changed since.
-    _refuse_clashes(pub["payload"], pub["department"], "go live")
-    try:
-        store.set_current(pub_id)
-    except StoreError as exc:
-        raise HTTPException(404, str(exc)) from exc
+    with _going_live:
+        _refuse_clashes(pub["payload"], pub["department"], "go live")
+        try:
+            store.set_current(pub_id)
+        except StoreError as exc:
+            raise HTTPException(404, str(exc)) from exc
     return {"live": pub_id}
 
 

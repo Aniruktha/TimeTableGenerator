@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased: free-period limit
+
+- New setting `max_free_per_week` (Build → Start: "Most free periods a class
+  may have in a week"; new setups start at 2). Every untaught period counts.
+  A class over it is refused before generating, with how many periods to add
+  or how short the day must be. The verifier re-counts it (H20), and an
+  impossible result names the limit. Setups without it have no limit.
+
 ## Unreleased: several departments
 
 - Each department has its own live timetable. Publishing, rolling back and

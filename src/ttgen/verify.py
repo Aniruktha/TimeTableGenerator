@@ -141,6 +141,16 @@ def verify(inst: Instance, sol: Solution, baseline=None) -> list[str]:
         if len(units) > 1:
             v.append(f"H2 {gid} has {len(units)} things at once on {day} P{p}: {sorted(units)}")
 
+    # H20 at most `max_free_per_week` free periods per class (college holds
+    # are not free periods: nobody is taught then, but nobody is free either)
+    if inst.max_free_per_week is not None:
+        open_slots = [sl for sl in grid.slots() if sl not in inst.blocked_slots]
+        for gid, grp in inst.groups.items():
+            free = sum(1 for d, p in open_slots if not seen_units.get((gid, d, p)))
+            if free > inst.max_free_per_week:
+                v.append(f"H20 {grp.name}: {free} free periods in the week, "
+                         f"at most {inst.max_free_per_week} allowed")
+
     # H3 elective basket members must share slots exactly
     for gid in inst.groups:
         for name, members in inst.baskets(gid).items():

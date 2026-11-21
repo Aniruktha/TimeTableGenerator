@@ -315,6 +315,7 @@ def _instance_payload(inst: Instance) -> dict[str, Any]:
     return {
         "name": inst.name,
         "department": inst.department,
+        "max_free_per_week": inst.max_free_per_week,
         "grid": _grid_payload(inst),
         "groups": [
             {

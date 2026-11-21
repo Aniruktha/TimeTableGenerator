@@ -47,6 +47,16 @@ in Build** reopens a version so a mid-term change moves as little as possible.
 **Print every sheet** gives the whole department's sheets (every class,
 teacher and room) ready to print or save as PDF.
 
+### Free periods
+
+**Most free periods a class may have in a week** (Build → Start) is the
+college's limit. New setups start at 2. Every period a class is not taught
+counts, including the first and last periods of a day. A class taught 33
+periods of a 40-period week always has 7 free, however the week is arranged,
+so the Classes step marks a class over the limit in red and says how many
+periods to add, or how short the day must be. Such a setup is refused before
+generating. Leave the box empty for no limit.
+
 ### More than one department
 
 Build the college **one department at a time**. Give each setup its

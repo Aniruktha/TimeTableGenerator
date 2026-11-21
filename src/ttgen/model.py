@@ -219,6 +219,18 @@ class TimetableModel:
                 m.Add(
                     sum(self.x[u[0].uid, d, p] for u in units) == self.busy[gid, d, p]
                 )
+            # H20: at most `max_free_per_week` free periods a week.  Fixed by
+            # the hours (preflight refuses a setup over it), so this only
+            # matters for explaining an infeasible result.
+            cap = self.inst.max_free_per_week
+            if cap is not None:
+                open_slots = [sl for sl in self.grid.slots() if sl not in self.inst.blocked_slots]
+                self._add(
+                    m.Add(sum(self.busy[gid, d, p] for d, p in open_slots)
+                          >= len(open_slots) - cap),
+                    f"freecap:{gid}",
+                    f"{self.inst.groups[gid].name} may have at most {cap} free periods a week",
+                )
 
     # -- H3: elective baskets are locked to identical slots ---------------- #
 

@@ -267,6 +267,7 @@ function blankSetup() {
   return {
     name: "My timetable",
     department: "",
+    max_free_per_week: 2,
     grid: {
       days: ["MON","TUE","WED","THU","FRI"],
       periods: [
@@ -405,6 +406,18 @@ function demandFor(gid) {
   }, 0);
 }
 const freeFor = (gid) => slotsInWeek() - demandFor(gid);
+/* The college's weekly limit on a class's free periods, or null for none. */
+const freeCap = () => (S.max_free_per_week === "" || S.max_free_per_week == null)
+  ? null : +S.max_free_per_week;
+const overCap = (gid) => freeCap() !== null && freeFor(gid) > freeCap();
+
+/* The longest day that keeps a class within the free-period limit while
+   still fitting its teaching, or null if no day length does. */
+function dayWithinCap(gid) {
+  const demand = demandFor(gid), days = S.grid.days.length, cap = freeCap();
+  const per = Math.floor((demand + cap) / days);
+  return per * days >= demand && per > 0 ? {periods: per, free: per * days - demand} : null;
+}
 
 /* The shortest day that would leave `want` free periods a week, and what it
    would actually leave -- days x periods rarely lands on the number exactly. */
@@ -691,6 +704,15 @@ function viewStart() {
           that other departments also use are kept clear of the periods they already
           have there — give a shared teacher or room the same ID in every department.</p>
       </div>
+      <div class="f" style="max-width:420px;margin-top:18px">
+        <label>Most free periods a class may have in a week</label>
+        <input type="number" min="0" data-set="max_free_per_week" style="max-width:120px"
+          value="${freeCap() === null ? "" : freeCap()}" placeholder="no limit">
+        <p class="help">Every period a class is not taught counts, first and last periods
+          included. The number comes from the hours: a class taught 33 periods in a
+          40-period week always has 7. A class over the limit has to be given more hours
+          or a shorter day before a timetable can be made. Leave empty for no limit.</p>
+      </div>
 
       <div class="sec-title">The school week</div>
       <div class="f">
@@ -843,6 +865,16 @@ function freeSummary(gid) {
   const demand = demandFor(gid), free = freeFor(gid), slots = slotsInWeek();
   if (!demand) return "";
   const alt = shorterDay(gid, 1);
+  if (free >= 0 && overCap(gid)) {
+    const cap = freeCap(), fit = dayWithinCap(gid);
+    return `<div class="note bad"><span class="ico">&#9888;</span><span>
+      This class has <b>${demand}</b> periods of subjects and the week holds
+      <b>${slots}</b>, so it would have <b>${free} free periods</b> a week — more than
+      the <b>${cap}</b> allowed (Start step). Add <b>${free - cap}</b> more period${free - cap === 1 ? "" : "s"}
+      of teaching (library, tutorial, mentoring…)${fit && fit.periods < S.grid.periods.length
+        ? `, or shorten the day to <b>${fit.periods} periods</b>, which leaves ${fit.free} free`
+        : ""}.</span></div>`;
+  }
   return `<div class="note ${free < 0 ? "bad" : "info"}"><span class="ico">&#8505;</span><span>
     This class has <b>${demand}</b> periods of subjects and the week holds
     <b>${slots}</b> (${S.grid.days.length} days &times; ${S.grid.periods.length}
@@ -869,7 +901,8 @@ function viewClasses() {
       <td>${g.home_room ? esc(g.home_room) : '<span style="color:var(--muted)">any</span>'}</td>
       <td class="num">${subj.length}</td>
       <td class="num">${demandFor(g.id)} / ${slotsInWeek()}</td>
-      <td class="num" style="${free < 0 ? "color:var(--red);font-weight:700" : ""}">${free}</td>
+      <td class="num" style="${free < 0 || overCap(g.id) ? "color:var(--red);font-weight:700" : ""}"
+        title="${overCap(g.id) ? `more than the ${freeCap()} allowed` : ""}">${free}</td>
       <td class="act">
         <button class="btn tiny" data-edit="groups" data-i="${i}">Edit</button>
         <button class="btn tiny danger" data-del="groups" data-i="${i}">Delete</button></td>
@@ -1604,6 +1637,8 @@ document.body.addEventListener("input", (ev) => {
   const t = ev.target;
   if (t.dataset.set === "name") S.name = t.value;
   if (t.dataset.set === "department") S.department = t.value;
+  if (t.dataset.set === "max_free_per_week")
+    S.max_free_per_week = t.value === "" ? null : Math.max(0, Math.floor(+t.value));
   if (t.dataset.per !== undefined) S.grid.periods[+t.dataset.per][t.dataset.k] = t.value;
   if (t.id === "c_kind" || t.id === "c_batches") {
     // batches only make sense for a lab; re-render the teacher pickers
@@ -1642,6 +1677,8 @@ function withoutPerDay(g) {
 /* Fill in anything a hand-written file left out, so the form never sees holes. */
 function normalise(raw) {
   const s = {...blankSetup(), ...raw};
+  // a file that says nothing about free periods has no limit (the server agrees)
+  s.max_free_per_week = raw.max_free_per_week ?? null;
   s.grid = {...blankSetup().grid, ...(raw.grid || {})};
   s.rooms = (raw.rooms || []).map(r => ({facilities:[], capacity:60, kind:"classroom", ...r}));
   s.staff = (raw.staff || []).map(x => ({kind:"internal", unavailable:[],

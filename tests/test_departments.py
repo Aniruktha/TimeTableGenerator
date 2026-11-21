@@ -144,7 +144,7 @@ def test_infeasible_because_of_another_department_is_explained():
     a = live(first_dept())
     a_anand, _ = used(a["payload"])
     raw = second_dept()
-    # ANAND R is free in Mathematics only when Computing already has him
+    # ANAND R is free in Mathematics only when Computing already has them
     grid = [(d, p) for d in ["MON", "TUE", "WED", "THU", "FRI"] for p in range(1, 9)]
     raw["staff"][0]["unavailable"] = [f"{d}:{p}" for d, p in grid if (d, p) not in a_anand]
     inst, _ = elsewhere.apply(from_dict(raw), [a])

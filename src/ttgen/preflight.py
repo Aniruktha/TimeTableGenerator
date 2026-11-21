@@ -24,15 +24,23 @@ def check(inst: Instance) -> list[str]:
     free_slots = [s for s in grid.slots() if s not in inst.blocked_slots]
     n_free = len(free_slots)
 
-    # 1. A class cannot be taught more hours than the week has periods.  This
-    #    is the only limit on a class's load: free periods are whatever is left
-    #    of the week, so there is no per-day floor or ceiling to check.
+    # 1. A class cannot be taught more hours than the week has periods, nor
+    #    fewer than the free-period limit allows: free periods are whatever is
+    #    left of the week, so there is no per-day floor or ceiling to check.
     for gid, grp in inst.groups.items():
         demand = inst.demand(gid)
         if demand > n_free:
             problems.append(
                 f"{grp.name}: {demand} periods of teaching demanded but only "
                 f"{n_free} slots exist in the week"
+            )
+        elif inst.max_free_per_week is not None and n_free - demand > inst.max_free_per_week:
+            spare, cap = n_free - demand, inst.max_free_per_week
+            problems.append(
+                f"{grp.name}: taught {demand} of the {n_free} periods in the week, so it "
+                f"would have {spare} free periods but at most {cap} are allowed -- add "
+                f"{spare - cap} more period{'s' if spare - cap != 1 else ''} of teaching "
+                f"(library, tutorial, mentoring...) or shorten the week"
             )
 
     # 2. Parallel sections of one course run at the same time, so nobody can
